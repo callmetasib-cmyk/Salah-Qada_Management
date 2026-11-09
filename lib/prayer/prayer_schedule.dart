@@ -184,9 +184,14 @@ DateTime _localDate(DateTime instant, PrayerCity city) {
 }
 
 class PrayerWindowSchedule {
-  PrayerWindowSchedule({required this.city, required this.windows});
+  PrayerWindowSchedule({
+    required this.city,
+    required this.localDate,
+    required this.windows,
+  });
 
   final PrayerCity city;
+  final DateTime localDate;
   final List<PrayerWindow> windows;
 
   PrayerWindow? currentWindow(DateTime now) {
@@ -224,17 +229,29 @@ class PrayerWindowSchedule {
 class PrayerLiveState {
   const PrayerLiveState({
     required this.now,
+    required this.schedule,
     required this.currentWindow,
     required this.nextWindow,
     required this.timeRemaining,
     required this.nextBoundary,
+    required this.nextWindowStartLocal,
+    required this.displayWindows,
+    required this.statuses,
+    required this.tiers,
+    required this.localTimes,
   });
 
   final DateTime now;
+  final PrayerWindowSchedule schedule;
   final PrayerWindow? currentWindow;
   final PrayerWindow? nextWindow;
   final Duration? timeRemaining;
   final DateTime? nextBoundary;
+  final DateTime? nextWindowStartLocal;
+  final List<PrayerWindow> displayWindows;
+  final Map<PrayerWindow, PrayerStatus> statuses;
+  final Map<PrayerWindow, PrayerTier?> tiers;
+  final Map<PrayerWindow, ({DateTime start, DateTime end})> localTimes;
 }
 
 typedef PrayerClock = DateTime Function();
@@ -310,12 +327,46 @@ class PrayerLiveController {
         : nextStart.difference(now).isNegative
         ? Duration.zero
         : nextStart.difference(now);
+    final displayWindows = schedule.windows
+        .where((window) => window.prayerDay == schedule.localDate)
+        .toList();
+    if (current?.prayer == 'Isha' &&
+        current!.prayerDay.isBefore(schedule.localDate)) {
+      displayWindows
+        ..removeLast()
+        ..insert(0, current);
+    }
+    final statuses = <PrayerWindow, PrayerStatus>{
+      for (final window in displayWindows)
+        window: _statusForWindow(
+          now: now,
+          start: window.start,
+          end: window.end,
+        ),
+    };
+    final tiers = <PrayerWindow, PrayerTier?>{
+      for (final window in displayWindows)
+        window: _tierForWindow(now: now, start: window.start, end: window.end),
+    };
+    final localTimes = <PrayerWindow, ({DateTime start, DateTime end})>{
+      for (final window in displayWindows)
+        window: (
+          start: _city.toLocalTime(window.start),
+          end: _city.toLocalTime(window.end),
+        ),
+    };
     _state = PrayerLiveState(
       now: now,
+      schedule: schedule,
       currentWindow: current,
       nextWindow: next,
       timeRemaining: remaining,
       nextBoundary: boundary,
+      nextWindowStartLocal: next == null ? null : _city.toLocalTime(next.start),
+      displayWindows: displayWindows,
+      statuses: statuses,
+      tiers: tiers,
+      localTimes: localTimes,
     );
     _scheduleBoundary(boundary, now);
     if (!_states.isClosed) {
@@ -484,7 +535,11 @@ PrayerWindowSchedule buildPrayerWindowSchedule({
     );
   }
   windows.sort((a, b) => a.start.compareTo(b.start));
-  return PrayerWindowSchedule(city: city, windows: windows);
+  return PrayerWindowSchedule(
+    city: city,
+    localDate: localToday,
+    windows: windows,
+  );
 }
 
 List<PrayerWindow> _buildPrayerWindowsForDay({
@@ -600,7 +655,7 @@ List<PrayerEntry> calculatePrayerSchedule({
     ),
   ];
 
-  return starts.indexed.map((indexedPrayer) {
+  final entries = starts.indexed.map((indexedPrayer) {
     final start = displayedStarts[indexedPrayer.$1];
     final end = ends[indexedPrayer.$1];
     final tier = _tierForWindow(now: currentTime, start: start, end: end);
@@ -612,6 +667,43 @@ List<PrayerEntry> calculatePrayerSchedule({
       status: _statusForWindow(now: currentTime, start: start, end: end),
     );
   }).toList();
+
+  if (date == null && currentTime.isBefore(displayedStarts.first)) {
+    final previousDate = selectedDate.subtract(const Duration(days: 1));
+    final previousRawTimes = calculateRawPrayerTimes(
+      city: city,
+      date: previousDate,
+      calculationMethod: selectedMethod,
+      madhab: madhab,
+    );
+    final previousIshaStart = roundPrayerStart(
+      previousRawTimes['Isha']!,
+      includeSafetyMargin: includeStartSafetyMargin,
+    );
+    final previousIshaEnd = displayedStarts.first;
+    entries
+      ..removeLast()
+      ..insert(
+        0,
+        PrayerEntry(
+          name: 'Isha',
+          start: city.toLocalTime(previousIshaStart),
+          end: city.toLocalTime(previousIshaEnd),
+          tier: _tierForWindow(
+            now: currentTime,
+            start: previousIshaStart,
+            end: previousIshaEnd,
+          ),
+          status: _statusForWindow(
+            now: currentTime,
+            start: previousIshaStart,
+            end: previousIshaEnd,
+          ),
+        ),
+      );
+  }
+
+  return entries;
 }
 
 Map<String, DateTime> calculateRawPrayerTimes({

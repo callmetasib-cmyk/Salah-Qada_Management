@@ -1,4 +1,7 @@
+// ignore_for_file: avoid_print
+
 import 'package:flutter_test/flutter_test.dart';
+import 'package:fake_async/fake_async.dart';
 import 'package:timezone/data/latest.dart' as tzdata;
 import 'package:timezone/timezone.dart' as tz;
 
@@ -175,6 +178,32 @@ void main() {
     expect(isha.endsOnDifferentLocalDate, isTrue);
   });
 
+  test(
+    'Dhaka rollover state has the expected screen state at each requested time',
+    () {
+      final probes = <String, DateTime>{
+        '00:30': localInstant(dhaka, 2026, 11, 8, 0, 30, 0),
+        '04:49': localInstant(dhaka, 2026, 11, 8, 4, 49, 0),
+        '04:50': localInstant(dhaka, 2026, 11, 8, 4, 50, 0),
+        '06:07': localInstant(dhaka, 2026, 11, 8, 6, 7, 0),
+        '06:08': localInstant(dhaka, 2026, 11, 8, 6, 8, 0),
+        '11:50': localInstant(dhaka, 2026, 11, 8, 11, 50, 0),
+        '23:59': localInstant(dhaka, 2026, 11, 8, 23, 59, 0),
+      };
+
+      for (final entry in probes.entries) {
+        final schedule = scheduleFor(dhaka, entry.value);
+        final current = schedule.currentWindow(entry.value);
+        final next = schedule.nextWindow(entry.value);
+        print(
+          'Dhaka ${entry.key}: current=${current?.prayer ?? 'none'} '
+          'prayerDay=${current?.prayerDay.toIso8601String() ?? '-'} '
+          'next=${next?.prayer ?? 'none'}',
+        );
+      }
+    },
+  );
+
   for (final date in [DateTime(2026, 11, 1), DateTime(2026, 3, 8)]) {
     test('New York DST transition ${date.toIso8601String()} has no skipped '
         'or duplicated hour', () {
@@ -200,6 +229,9 @@ void main() {
       final isha = schedule.windows.firstWhere(
         (window) => window.prayer == 'Isha' && window.prayerDay == date,
       );
+      final maghrib = schedule.windows.firstWhere(
+        (window) => window.prayer == 'Maghrib' && window.prayerDay == date,
+      );
       final fajr = schedule.windows.firstWhere(
         (window) =>
             window.prayer == 'Fajr' &&
@@ -210,14 +242,14 @@ void main() {
       final startOffset = startLocal.timeZoneOffset;
       final endOffset = endLocal.timeZoneOffset;
       final wallDuration =
-          DateTime(
+          DateTime.utc(
             endLocal.year,
             endLocal.month,
             endLocal.day,
             endLocal.hour,
             endLocal.minute,
           ).difference(
-            DateTime(
+            DateTime.utc(
               startLocal.year,
               startLocal.month,
               startLocal.day,
@@ -231,9 +263,40 @@ void main() {
         isha.end.difference(isha.start),
         wallDuration - (endOffset - startOffset),
       );
-      expect(isha.islamicMidnight, isNotNull);
+      expect(
+        isha.islamicMidnight,
+        maghrib.start.add(fajr.start.difference(maghrib.start) ~/ 2),
+      );
     });
   }
+
+  test(
+    'New York Islamic midnight is the UTC midpoint across fall-back DST',
+    () {
+      final now = localInstant(newYork, 2026, 11, 1, 12, 0, 0);
+      final schedule = scheduleFor(newYork, now);
+      final isha = schedule.windows.firstWhere(
+        (window) =>
+            window.prayer == 'Isha' &&
+            window.prayerDay == DateTime(2026, 11, 1),
+      );
+      final maghrib = schedule.windows.firstWhere(
+        (window) =>
+            window.prayer == 'Maghrib' &&
+            window.prayerDay == DateTime(2026, 11, 1),
+      );
+      final nextFajr = schedule.windows.firstWhere(
+        (window) =>
+            window.prayer == 'Fajr' &&
+            window.prayerDay == DateTime(2026, 11, 2),
+      );
+
+      expect(
+        isha.islamicMidnight,
+        maghrib.start.add(nextFajr.start.difference(maghrib.start) ~/ 2),
+      );
+    },
+  );
 
   test('changing the selected city recomputes the current window', () async {
     var now = localInstant(dhaka, 2026, 11, 8, 0, 30, 0);
@@ -273,4 +336,126 @@ void main() {
     expect(controller.state.currentWindow?.prayer, 'Fajr');
     await controller.dispose();
   });
+
+  test('controller timer emits the new window after a boundary', () {
+    fakeAsync((async) {
+      final initial = localInstant(dhaka, 2026, 11, 8, 4, 0, 0);
+      final schedule = scheduleFor(dhaka, initial);
+      final emitted = <PrayerLiveState>[];
+      final controller = PrayerLiveController(
+        city: dhaka,
+        calculationMethod: dhaka.automaticProfile.method,
+        madhab: dhaka.automaticProfile.madhab,
+        clock: () => initial.add(async.elapsed),
+      );
+      final subscription = controller.states.listen(emitted.add);
+
+      final todayFajr = schedule.windows.firstWhere(
+        (window) =>
+            window.prayer == 'Fajr' &&
+            window.prayerDay == DateTime(2026, 11, 8),
+      );
+      async.elapse(
+        todayFajr.start.difference(initial) + const Duration(seconds: 1),
+      );
+
+      expect(emitted.last.currentWindow?.prayer, 'Fajr');
+      subscription.cancel();
+      controller.dispose();
+    });
+  });
+
+  test(
+    'controller rebuilds the next evening after crossing local midnight',
+    () async {
+      var now = localInstant(dhaka, 2026, 11, 8, 23, 59, 0);
+      final controller = PrayerLiveController(
+        city: dhaka,
+        calculationMethod: dhaka.automaticProfile.method,
+        madhab: dhaka.automaticProfile.madhab,
+        clock: () => now,
+      );
+      now = localInstant(dhaka, 2026, 11, 9, 20, 0, 0);
+      controller.refresh();
+
+      final schedule = scheduleFor(dhaka, now);
+      final isha = schedule.windows.firstWhere(
+        (window) =>
+            window.prayer == 'Isha' &&
+            window.prayerDay == DateTime(2026, 11, 9),
+      );
+      expect(isha.prayer, 'Isha');
+      expect(isha.prayerDay, DateTime(2026, 11, 9));
+      expect(isha.end, isNotNull);
+      await controller.dispose();
+    },
+  );
+
+  test(
+    'city local date is used when the device instant is still UTC date before',
+    () {
+      final deviceUtcInstant = DateTime.utc(2026, 11, 7, 18, 30);
+      final schedule = scheduleFor(dhaka, deviceUtcInstant);
+
+      expect(schedule.localDate, DateTime(2026, 11, 8));
+      expect(
+        schedule.windows.any(
+          (window) => window.prayerDay == DateTime(2026, 11, 8),
+        ),
+        isTrue,
+      );
+      expect(dhaka.localDateAt(deviceUtcInstant), DateTime(2026, 11, 8));
+    },
+  );
+
+  void walk(PrayerCity city, DateTime start, int minutes) {
+    var now = start;
+    for (var index = 0; index <= minutes; index++) {
+      final schedule = scheduleFor(city, now);
+      final current = schedule.currentWindow(now);
+      final nextBoundary = schedule.nextBoundary(now);
+      final local = city.toLocalTime(now);
+      final inGap = schedule.windows.any(
+        (window) =>
+            window.prayerDay == DateTime(local.year, local.month, local.day) &&
+            window.prayer == 'Fajr' &&
+            !now.isBefore(window.end) &&
+            now.isBefore(
+              schedule.windows
+                  .firstWhere(
+                    (candidate) =>
+                        candidate.prayer == 'Dhuhr' &&
+                        candidate.prayerDay ==
+                            DateTime(local.year, local.month, local.day),
+                  )
+                  .start,
+            ),
+      );
+
+      expect(current == null, inGap, reason: '$city at $now');
+      expect(nextBoundary?.isAfter(now), isTrue, reason: '$city at $now');
+      if (current != null) {
+        expect(
+          current.prayerDay,
+          DateTime(
+            city.toLocalTime(current.start).year,
+            city.toLocalTime(current.start).month,
+            city.toLocalTime(current.start).day,
+          ),
+        );
+      }
+      now = now.add(const Duration(minutes: 1));
+    }
+  }
+
+  test('Dhaka walks 72 hours without stale or missing rollover state', () {
+    walk(dhaka, localInstant(dhaka, 2026, 11, 7, 0, 0, 0), 72 * 60);
+  });
+
+  test(
+    'New York walks across fall-back DST without stale or missing state',
+    () {
+      walk(newYork, localInstant(newYork, 2026, 10, 31, 0, 0, 0), 48 * 60);
+    },
+  );
 }
