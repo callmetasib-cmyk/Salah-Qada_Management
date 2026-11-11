@@ -1,11 +1,15 @@
 import 'package:adhan_dart/adhan_dart.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
+import 'package:timezone/data/latest.dart' as tzdata;
 
 import 'prayer/prayer_schedule.dart';
 import 'prayer/prayer_tier.dart';
+import 'prayer/qada_state.dart';
+import 'widgets/salah_dial_visualizer.dart';
 
 void main() {
+  tzdata.initializeTimeZones();
   runApp(const SalahQadaApp());
 }
 
@@ -66,7 +70,7 @@ class _AppShellState extends State<AppShell> {
         madhab: _selectedMadhab,
       ),
       const QadaScreen(),
-      const StreakScreen(),
+      const HistoryScreen(),
       SettingsScreen(
         selectedCity: _selectedCity,
         settingsMode: _settingsMode,
@@ -109,9 +113,9 @@ class _AppShellState extends State<AppShell> {
             label: 'Qada',
           ),
           NavigationDestination(
-            icon: Icon(Icons.local_fire_department_outlined),
-            selectedIcon: Icon(Icons.local_fire_department),
-            label: 'Streak',
+            icon: Icon(Icons.calendar_month_outlined),
+            selectedIcon: Icon(Icons.calendar_month),
+            label: 'History',
           ),
           NavigationDestination(
             icon: Icon(Icons.settings_outlined),
@@ -125,12 +129,17 @@ class _AppShellState extends State<AppShell> {
 }
 
 const _debugPrayerClockOverride = String.fromEnvironment('PRAYER_DEBUG_NOW');
+DateTime? _debugClockBase;
+DateTime? _debugClockRealStart;
 
 DateTime _prayerClock() {
   if (!kReleaseMode && _debugPrayerClockOverride.isNotEmpty) {
-    final override = DateTime.tryParse(_debugPrayerClockOverride);
+    final override =
+        _debugClockBase ??= DateTime.tryParse(_debugPrayerClockOverride);
     if (override != null) {
-      return override;
+      _debugClockRealStart ??= DateTime.now();
+      final elapsed = DateTime.now().difference(_debugClockRealStart!);
+      return override.add(elapsed);
     }
   }
   return DateTime.now();
@@ -198,88 +207,118 @@ class _PrayerHomeScreenState extends State<PrayerHomeScreen>
 
   @override
   Widget build(BuildContext context) {
-    return StreamBuilder<PrayerLiveState>(
-      stream: _controller.states,
-      initialData: _controller.state,
-      builder: (context, snapshot) {
-        final liveState = snapshot.data!;
-        final current = liveState.currentWindow;
-        final theme = Theme.of(context);
-        return Scaffold(
-          appBar: AppBar(
-            title: const Text('Salah & Qada'),
-            backgroundColor: Colors.transparent,
-          ),
-          body: SafeArea(
-            child: ListView(
-              padding: const EdgeInsets.fromLTRB(20, 12, 20, 32),
-              children: [
-                Text(
-                  'Assalamu alaikum',
-                  style: theme.textTheme.headlineSmall?.copyWith(
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  'Stay mindful of each salah and keep your qada journey organized.',
-                  style: theme.textTheme.bodyLarge?.copyWith(
-                    color: theme.colorScheme.onSurfaceVariant,
-                  ),
-                ),
-                const SizedBox(height: 24),
-                Card(
-                  elevation: 0,
-                  child: Padding(
-                    padding: const EdgeInsets.all(20),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Prayer times',
-                          style: theme.textTheme.titleLarge?.copyWith(
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          '${widget.city.name} · ${widget.calculationMethod.name} · '
-                          '${widget.madhab == Madhab.hanafi ? 'Hanafi' : 'Standard'} · local time',
-                          style: theme.textTheme.bodyMedium?.copyWith(
-                            color: theme.colorScheme.onSurfaceVariant,
-                          ),
-                        ),
-                      ],
+    return ListenableBuilder(
+      listenable: PrayerTrackerState.instance,
+      builder: (context, _) {
+        return StreamBuilder<PrayerLiveState>(
+          stream: _controller.states,
+          initialData: _controller.state,
+          builder: (context, snapshot) {
+            final liveState = snapshot.data!;
+            final current = liveState.currentWindow;
+            final theme = Theme.of(context);
+
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              PrayerTrackerState.instance.syncWithLiveStatus(
+                liveState.displayWindows,
+                liveState.statuses,
+              );
+            });
+
+            return Scaffold(
+              appBar: AppBar(
+                title: const Text('Salah & Qada'),
+                backgroundColor: Colors.transparent,
+              ),
+              body: SafeArea(
+                child: ListView(
+                  padding: const EdgeInsets.fromLTRB(20, 12, 20, 32),
+                  children: [
+                    Text(
+                      'Assalamu alaikum',
+                      style: theme.textTheme.headlineSmall?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  current == null
-                      ? 'Next: ${liveState.nextWindow?.prayer ?? 'none'} at '
-                            '${liveState.nextWindowStartLocal == null ? '--:--' : _formatTime(liveState.nextWindowStartLocal!)}'
-                      : '${current.prayer}: '
-                            '${_formatTime(liveState.localTimes[current]!.start)} – '
-                            '${_formatTime(liveState.localTimes[current]!.end)}'
-                            '${current.endsOnDifferentLocalDate ? ' (tomorrow)' : ''} · '
-                            '${_formatDuration(liveState.timeRemaining)} remaining',
-                  style: theme.textTheme.titleMedium,
-                ),
-                const SizedBox(height: 12),
-                ...liveState.displayWindows.map(
-                  (prayer) => Padding(
-                    padding: const EdgeInsets.only(bottom: 10),
-                    child: _PrayerCard(
-                      prayer: prayer,
-                      localTimes: liveState.localTimes[prayer]!,
-                      status: liveState.statuses[prayer]!,
-                      tier: liveState.tiers[prayer],
+                    const SizedBox(height: 6),
+                    Text(
+                      'Stay mindful of each salah and keep your qada journey organized.',
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
                     ),
-                  ),
+                    const SizedBox(height: 16),
+                    SalahDialVisualizer(
+                      currentWindow: current,
+                      nextWindow: liveState.nextWindow,
+                      currentTier:
+                          current == null ? null : liveState.tiers[current],
+                      timeRemaining: liveState.timeRemaining,
+                      now: liveState.now,
+                    ),
+                    const SizedBox(height: 16),
+                    Card(
+                      elevation: 0,
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Prayer times',
+                              style: theme.textTheme.titleMedium?.copyWith(
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              '${widget.city.name} · ${widget.calculationMethod.name} · '
+                              '${widget.madhab == Madhab.hanafi ? 'Hanafi' : 'Standard'}',
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: theme.colorScheme.onSurfaceVariant,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    Text(
+                      'Today\'s prayers',
+                      style: theme.textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    ...liveState.displayWindows.map(
+                      (prayer) {
+                        final isDone = PrayerTrackerState.instance.isPrayerDone(
+                          prayer.prayer,
+                          prayer.prayerDay,
+                        );
+                        return Padding(
+                          padding: const EdgeInsets.only(bottom: 10),
+                          child: _PrayerCard(
+                            prayer: prayer,
+                            localTimes: liveState.localTimes[prayer]!,
+                            status: liveState.statuses[prayer]!,
+                            tier: liveState.tiers[prayer],
+                            isDone: isDone,
+                            onToggleDone: () {
+                              PrayerTrackerState.instance.togglePrayer(
+                                prayer.prayer,
+                                prayer.prayerDay,
+                              );
+                            },
+                          ),
+                        );
+                      },
+                    ),
+                  ],
                 ),
-              ],
-            ),
-          ),
+              ),
+            );
+          },
         );
       },
     );
@@ -559,23 +598,120 @@ class QadaScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const _PlaceholderScreen(
-      title: 'Qada tracker',
-      icon: Icons.checklist_outlined,
-      message: 'Qada tracking and planning will be added here next.',
+    return ListenableBuilder(
+      listenable: PrayerTrackerState.instance,
+      builder: (context, _) {
+        final tracker = PrayerTrackerState.instance;
+        final pending =
+            tracker.qadaList.where((item) => !item.isMadeUp).toList();
+
+        return Scaffold(
+          appBar: AppBar(
+            title: const Text('Qada tracker'),
+            backgroundColor: Colors.transparent,
+          ),
+          body: pending.isEmpty
+              ? Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.check_circle_outline,
+                        size: 64,
+                        color: Colors.green.shade600,
+                      ),
+                      const SizedBox(height: 16),
+                      const Text(
+                        'All caught up!',
+                        style: TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      const Text(
+                        'No uncompleted prayers logged as Qada.',
+                        style: TextStyle(color: Colors.grey),
+                      ),
+                    ],
+                  ),
+                )
+              : ListView(
+                  padding: const EdgeInsets.fromLTRB(20, 12, 20, 32),
+                  children: [
+                    Card(
+                      elevation: 0,
+                      color: const Color(0xFF176B58).withValues(alpha: 0.1),
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Row(
+                          children: [
+                            const Icon(
+                              Icons.info_outline,
+                              color: Color(0xFF176B58),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Text(
+                                'You have ${pending.length} uncompleted prayer(s) recorded.',
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    FilledButton.icon(
+                      onPressed: tracker.completeAllQada,
+                      icon: const Icon(Icons.done_all),
+                      label: const Text('Make up all'),
+                      style: FilledButton.styleFrom(
+                        minimumSize: const Size.fromHeight(44),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    ...pending.map((item) {
+                      return Card(
+                        elevation: 0,
+                        margin: const EdgeInsets.only(bottom: 10),
+                        child: ListTile(
+                          leading: const CircleAvatar(
+                            backgroundColor: Color(0x22C53929),
+                            foregroundColor: Color(0xFFC53929),
+                            child: Icon(Icons.history),
+                          ),
+                          title: Text(
+                            item.prayer,
+                            style: const TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                          subtitle: Text('Missed on ${item.date}'),
+                          trailing: FilledButton.tonal(
+                            onPressed: () => tracker.completeQadaItem(item),
+                            child: const Text('Make up'),
+                          ),
+                        ),
+                      );
+                    }),
+                  ],
+                ),
+        );
+      },
     );
   }
 }
 
-class StreakScreen extends StatelessWidget {
-  const StreakScreen({super.key});
+class HistoryScreen extends StatelessWidget {
+  const HistoryScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
     return const _PlaceholderScreen(
-      title: 'Streak',
-      icon: Icons.local_fire_department_outlined,
-      message: 'Your salah streak and progress will appear here later.',
+      title: 'History',
+      icon: Icons.calendar_month_outlined,
+      message: 'Your salah history, consistency, and progress will appear here.',
     );
   }
 }
@@ -626,37 +762,120 @@ class _PrayerCard extends StatelessWidget {
     required this.localTimes,
     required this.status,
     required this.tier,
+    required this.isDone,
+    required this.onToggleDone,
   });
 
   final PrayerWindow prayer;
   final ({DateTime start, DateTime end}) localTimes;
   final PrayerStatus status;
   final PrayerTier? tier;
+  final bool isDone;
+  final VoidCallback onToggleDone;
 
   @override
   Widget build(BuildContext context) {
+    final isPast = status == PrayerStatus.past;
+    final isMissed = isPast && !isDone;
     final tierColor = _tierColor(tier);
+
+    final statusText = isDone
+        ? 'Completed'
+        : isMissed
+            ? 'Missed (Qada)'
+            : _tierLabel(status, tier);
+
     return Card(
       elevation: 0,
+      color: isDone
+          ? Colors.green.shade50.withValues(alpha: 0.5)
+          : isMissed
+              ? Colors.grey.shade100.withValues(alpha: 0.6)
+              : null,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: isDone
+            ? BorderSide(color: Colors.green.shade300, width: 1.5)
+            : isMissed
+                ? BorderSide(color: Colors.grey.shade300, width: 1.2)
+                : BorderSide.none,
+      ),
       child: ListTile(
         contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         leading: CircleAvatar(
-          backgroundColor: tierColor.withValues(alpha: 0.14),
-          foregroundColor: tierColor,
-          child: Icon(_tierIcon(tier)),
+          backgroundColor: isDone
+              ? Colors.green.shade100
+              : isMissed
+                  ? Colors.grey.shade200
+                  : tierColor.withValues(alpha: 0.14),
+          foregroundColor: isDone
+              ? const Color(0xFF218739)
+              : isMissed
+                  ? Colors.grey.shade500
+                  : tierColor,
+          child: Icon(
+            isDone
+                ? Icons.check
+                : isMissed
+                    ? Icons.history
+                    : _tierIcon(tier),
+          ),
         ),
         title: Text(
           prayer.prayer,
-          style: const TextStyle(fontWeight: FontWeight.w700),
+          style: TextStyle(
+            fontWeight: FontWeight.w700,
+            decoration: isDone ? TextDecoration.lineThrough : null,
+            color: isDone
+                ? Colors.grey.shade600
+                : isMissed
+                    ? Colors.grey.shade500
+                    : null,
+          ),
         ),
         subtitle: Text(
           '${_formatTime(localTimes.start)} – '
           '${_formatTime(localTimes.end)}'
           '${prayer.endsOnDifferentLocalDate ? ' (tomorrow)' : ''}',
         ),
-        trailing: Text(
-          _tierLabel(status, tier),
-          style: TextStyle(color: tierColor, fontWeight: FontWeight.w700),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              statusText,
+              style: TextStyle(
+                color: isDone
+                    ? const Color(0xFF218739)
+                    : isMissed
+                        ? Colors.grey.shade600
+                        : tierColor,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(width: 8),
+            // Once the prayer window passes, the checkbox locks and cannot be checked/unchecked.
+            IconButton(
+              icon: Icon(
+                isDone
+                    ? Icons.check_circle
+                    : isMissed
+                        ? Icons.lock_outline
+                        : Icons.radio_button_unchecked,
+                color: isDone
+                    ? const Color(0xFF218739)
+                    : isMissed
+                        ? Colors.grey.shade400
+                        : Colors.grey.shade400,
+                size: 26,
+              ),
+              tooltip: isPast
+                  ? (isDone
+                      ? 'Prayed on time (Window closed)'
+                      : 'Time passed — moved to Qada')
+                  : (isDone ? 'Mark as not prayed' : 'Mark as prayed'),
+              onPressed: isPast ? null : onToggleDone,
+            ),
+          ],
         ),
       ),
     );
@@ -679,7 +898,7 @@ class _PrayerCard extends StatelessWidget {
   String _tierLabel(PrayerStatus status, PrayerTier? tier) => switch (tier) {
     PrayerTier.green => 'Optimal',
     PrayerTier.yellow => 'Normal',
-    PrayerTier.red => 'Danger',
+    PrayerTier.red => 'Ending soon',
     null => status == PrayerStatus.past ? 'Past' : 'Upcoming',
   };
 }
@@ -692,13 +911,4 @@ String _formatTime(DateTime time) {
   final minute = time.minute.toString().padLeft(2, '0');
   final period = time.hour < 12 ? 'AM' : 'PM';
   return '$hour:$minute $period';
-}
-
-String _formatDuration(Duration? duration) {
-  if (duration == null) {
-    return '--';
-  }
-  final hours = duration.inHours;
-  final minutes = duration.inMinutes.remainder(60);
-  return hours > 0 ? '${hours}h ${minutes}m' : '${minutes}m';
 }

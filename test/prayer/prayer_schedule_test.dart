@@ -1,8 +1,11 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:timezone/data/latest.dart' as tzdata;
 
 import 'package:salah_qada_tracker/prayer/prayer_schedule.dart';
 
 void main() {
+  tzdata.initializeTimeZones();
+
   test('prayer starts round up after the safety margin', () {
     final raw = DateTime.utc(2026, 11, 8, 12, 0, 1);
 
@@ -32,43 +35,55 @@ void main() {
 
   test('adjacent prayer windows share displayed boundaries', () {
     final city = starterCities.first;
-    final date = DateTime(2026, 11, 8);
-    final schedule = calculatePrayerSchedule(
+    final date = DateTime.utc(2026, 11, 8, 12);
+    final schedule = buildPrayerWindowSchedule(
       city: city,
-      date: date,
-      now: date.add(const Duration(hours: 12)),
+      now: date,
+      calculationMethod: city.automaticProfile.method,
+      madhab: city.automaticProfile.madhab,
     );
-    final nextDay = calculatePrayerSchedule(
-      city: city,
-      date: date.add(const Duration(days: 1)),
-      now: date.add(const Duration(hours: 12)),
-    );
+    final todayWindows = schedule.windows
+        .where((w) => w.prayerDay == DateTime.utc(2026, 11, 8))
+        .toList();
+    final tomorrowWindows = schedule.windows
+        .where((w) => w.prayerDay == DateTime.utc(2026, 11, 9))
+        .toList();
 
-    expect(schedule[1].end, schedule[2].start);
-    expect(schedule[2].end, schedule[3].start);
-    expect(schedule[3].end, schedule[4].start);
-    expect(schedule[4].end, nextDay.first.start);
+    expect(todayWindows[1].end, todayWindows[2].start);
+    expect(todayWindows[2].end, todayWindows[3].start);
+    expect(todayWindows[3].end, todayWindows[4].start);
+    expect(todayWindows[4].end, tomorrowWindows.first.start);
   });
 
   test('the schedule margin shifts each start and dependent window end', () {
     final city = starterCities.first;
-    final date = DateTime(2026, 11, 8);
-    final withoutMargin = calculatePrayerSchedule(
+    final date = DateTime.utc(2026, 11, 8, 12);
+    final withoutMargin = buildPrayerWindowSchedule(
       city: city,
-      date: date,
-      now: date.add(const Duration(hours: 12)),
+      now: date,
+      calculationMethod: city.automaticProfile.method,
+      madhab: city.automaticProfile.madhab,
       includeStartSafetyMargin: false,
     );
-    final withMargin = calculatePrayerSchedule(
+    final withMargin = buildPrayerWindowSchedule(
       city: city,
-      date: date,
-      now: date.add(const Duration(hours: 12)),
+      now: date,
+      calculationMethod: city.automaticProfile.method,
+      madhab: city.automaticProfile.madhab,
+      includeStartSafetyMargin: true,
     );
 
-    expect(withMargin[2].start.isAfter(withoutMargin[2].start), isTrue);
-    expect(withMargin[1].end, withMargin[2].start);
-    expect(withMargin[1].end.isAfter(withoutMargin[1].end), isTrue);
-    expect(withMargin[4].end.isAfter(withoutMargin[4].end), isTrue);
+    final withoutToday = withoutMargin.windows
+        .where((w) => w.prayerDay == DateTime.utc(2026, 11, 8))
+        .toList();
+    final withToday = withMargin.windows
+        .where((w) => w.prayerDay == DateTime.utc(2026, 11, 8))
+        .toList();
+
+    expect(withToday[2].start.isAfter(withoutToday[2].start), isTrue);
+    expect(withToday[1].end, withToday[2].start);
+    expect(withToday[1].end.isAfter(withoutToday[1].end), isTrue);
+    expect(withToday[4].end.isAfter(withoutToday[4].end), isTrue);
   });
 
   test(
@@ -76,7 +91,7 @@ void main() {
     () {
       final rawTimes = calculateRawPrayerTimes(
         city: starterCities.first,
-        date: DateTime(2026, 11, 8),
+        date: DateTime.utc(2026, 11, 8),
         calculationMethod: starterCities.first.automaticProfile.method,
         madhab: starterCities.first.automaticProfile.madhab,
       );
@@ -94,22 +109,15 @@ void main() {
     for (final cityName in ['Osaka', 'Kuala Lumpur']) {
       final city = starterCities.firstWhere((city) => city.name == cityName);
       final profile = city.automaticProfile;
-      final schedule = calculatePrayerSchedule(
+      final schedule = buildPrayerWindowSchedule(
         city: city,
         now: now,
         calculationMethod: profile.method,
         madhab: profile.madhab,
       );
 
-      expect(schedule.first.name, 'Isha', reason: cityName);
-      expect(schedule.first.status, PrayerStatus.current, reason: cityName);
-      expect(
-        schedule
-            .skip(1)
-            .every((prayer) => prayer.status == PrayerStatus.upcoming),
-        isTrue,
-        reason: cityName,
-      );
+      final current = schedule.currentWindow(now);
+      expect(current?.prayer, 'Isha', reason: cityName);
     }
   });
 }

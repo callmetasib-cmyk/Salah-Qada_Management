@@ -1,9 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:timezone/data/latest.dart' as tzdata;
 
 import 'package:salah_qada_tracker/main.dart';
 
 void main() {
+  setUpAll(() {
+    tzdata.initializeTimeZones();
+  });
   testWidgets('renders the Salah and Qada home shell', (
     WidgetTester tester,
   ) async {
@@ -30,9 +34,9 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Qada tracker'), findsOneWidget);
 
-    await tester.tap(find.text('Streak'));
+    await tester.tap(find.text('History'));
     await tester.pumpAndSettle();
-    expect(find.text('Streak'), findsWidgets);
+    expect(find.text('History'), findsWidgets);
 
     await tester.tap(find.text('Settings'));
     await tester.pumpAndSettle();

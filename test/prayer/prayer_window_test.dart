@@ -52,7 +52,7 @@ void main() {
     final current = scheduleFor(dhaka, now).currentWindow(now);
 
     expect(current?.prayer, 'Isha');
-    expect(current?.prayerDay, DateTime(2026, 11, 7));
+    expect(current?.prayerDay, DateTime.utc(2026, 11, 7));
   });
 
   test('04:49 returns yesterday Isha with the previous prayer day', () {
@@ -60,7 +60,7 @@ void main() {
     final current = scheduleFor(dhaka, now).currentWindow(now);
 
     expect(current?.prayer, 'Isha');
-    expect(current?.prayerDay, DateTime(2026, 11, 7));
+    expect(current?.prayerDay, DateTime.utc(2026, 11, 7));
   });
 
   test('exact Fajr start is current and the adjacent seconds are correct', () {
@@ -140,7 +140,7 @@ void main() {
     final current = scheduleFor(dhaka, now).currentWindow(now);
 
     expect(current?.prayer, 'Isha');
-    expect(current?.prayerDay, DateTime(2026, 11, 7));
+    expect(current?.prayerDay, DateTime.utc(2026, 11, 7));
   });
 
   test('Islamic midnight is the instant midpoint of Maghrib and next Fajr', () {
@@ -149,15 +149,15 @@ void main() {
     final maghrib = schedule.windows.firstWhere(
       (window) =>
           window.prayer == 'Maghrib' &&
-          window.prayerDay == DateTime(2026, 11, 8),
+          window.prayerDay == DateTime.utc(2026, 11, 8),
     );
     final isha = schedule.windows.firstWhere(
       (window) =>
-          window.prayer == 'Isha' && window.prayerDay == DateTime(2026, 11, 8),
+          window.prayer == 'Isha' && window.prayerDay == DateTime.utc(2026, 11, 8),
     );
     final nextFajr = schedule.windows.firstWhere(
       (window) =>
-          window.prayer == 'Fajr' && window.prayerDay == DateTime(2026, 11, 9),
+          window.prayer == 'Fajr' && window.prayerDay == DateTime.utc(2026, 11, 9),
     );
 
     expect(
@@ -172,7 +172,7 @@ void main() {
     final schedule = scheduleFor(dhaka, now);
     final isha = schedule.windows.firstWhere(
       (window) =>
-          window.prayer == 'Isha' && window.prayerDay == DateTime(2026, 11, 8),
+          window.prayer == 'Isha' && window.prayerDay == DateTime.utc(2026, 11, 8),
     );
 
     expect(isha.endsOnDifferentLocalDate, isTrue);
@@ -204,7 +204,7 @@ void main() {
     },
   );
 
-  for (final date in [DateTime(2026, 11, 1), DateTime(2026, 3, 8)]) {
+  for (final date in [DateTime.utc(2026, 11, 1), DateTime.utc(2026, 3, 8)]) {
     test('New York DST transition ${date.toIso8601String()} has no skipped '
         'or duplicated hour', () {
       final now = localInstant(
@@ -235,7 +235,7 @@ void main() {
       final fajr = schedule.windows.firstWhere(
         (window) =>
             window.prayer == 'Fajr' &&
-            window.prayerDay == DateTime(date.year, date.month, date.day + 1),
+            window.prayerDay == DateTime.utc(date.year, date.month, date.day + 1),
       );
       final startLocal = newYork.toLocalTime(isha.start);
       final endLocal = newYork.toLocalTime(isha.end);
@@ -278,17 +278,17 @@ void main() {
       final isha = schedule.windows.firstWhere(
         (window) =>
             window.prayer == 'Isha' &&
-            window.prayerDay == DateTime(2026, 11, 1),
+            window.prayerDay == DateTime.utc(2026, 11, 1),
       );
       final maghrib = schedule.windows.firstWhere(
         (window) =>
             window.prayer == 'Maghrib' &&
-            window.prayerDay == DateTime(2026, 11, 1),
+            window.prayerDay == DateTime.utc(2026, 11, 1),
       );
       final nextFajr = schedule.windows.firstWhere(
         (window) =>
             window.prayer == 'Fajr' &&
-            window.prayerDay == DateTime(2026, 11, 2),
+            window.prayerDay == DateTime.utc(2026, 11, 2),
       );
 
       expect(
@@ -306,7 +306,7 @@ void main() {
       madhab: dhaka.automaticProfile.madhab,
       clock: () => now,
     );
-    expect(controller.state.currentWindow?.prayerDay, DateTime(2026, 11, 7));
+    expect(controller.state.currentWindow?.prayerDay, DateTime.utc(2026, 11, 7));
 
     controller.city = newYork;
 
@@ -353,7 +353,7 @@ void main() {
       final todayFajr = schedule.windows.firstWhere(
         (window) =>
             window.prayer == 'Fajr' &&
-            window.prayerDay == DateTime(2026, 11, 8),
+            window.prayerDay == DateTime.utc(2026, 11, 8),
       );
       async.elapse(
         todayFajr.start.difference(initial) + const Duration(seconds: 1),
@@ -382,10 +382,10 @@ void main() {
       final isha = schedule.windows.firstWhere(
         (window) =>
             window.prayer == 'Isha' &&
-            window.prayerDay == DateTime(2026, 11, 9),
+            window.prayerDay == DateTime.utc(2026, 11, 9),
       );
       expect(isha.prayer, 'Isha');
-      expect(isha.prayerDay, DateTime(2026, 11, 9));
+      expect(isha.prayerDay, DateTime.utc(2026, 11, 9));
       expect(isha.end, isNotNull);
       await controller.dispose();
     },
@@ -397,14 +397,14 @@ void main() {
       final deviceUtcInstant = DateTime.utc(2026, 11, 7, 18, 30);
       final schedule = scheduleFor(dhaka, deviceUtcInstant);
 
-      expect(schedule.localDate, DateTime(2026, 11, 8));
+      expect(schedule.localDate, DateTime.utc(2026, 11, 8));
       expect(
         schedule.windows.any(
-          (window) => window.prayerDay == DateTime(2026, 11, 8),
+          (window) => window.prayerDay == DateTime.utc(2026, 11, 8),
         ),
         isTrue,
       );
-      expect(dhaka.localDateAt(deviceUtcInstant), DateTime(2026, 11, 8));
+      expect(dhaka.localDateAt(deviceUtcInstant), DateTime.utc(2026, 11, 8));
     },
   );
 
@@ -417,7 +417,8 @@ void main() {
       final local = city.toLocalTime(now);
       final inGap = schedule.windows.any(
         (window) =>
-            window.prayerDay == DateTime(local.year, local.month, local.day) &&
+            window.prayerDay ==
+                DateTime.utc(local.year, local.month, local.day) &&
             window.prayer == 'Fajr' &&
             !now.isBefore(window.end) &&
             now.isBefore(
@@ -426,7 +427,7 @@ void main() {
                     (candidate) =>
                         candidate.prayer == 'Dhuhr' &&
                         candidate.prayerDay ==
-                            DateTime(local.year, local.month, local.day),
+                            DateTime.utc(local.year, local.month, local.day),
                   )
                   .start,
             ),
@@ -437,7 +438,7 @@ void main() {
       if (current != null) {
         expect(
           current.prayerDay,
-          DateTime(
+          DateTime.utc(
             city.toLocalTime(current.start).year,
             city.toLocalTime(current.start).month,
             city.toLocalTime(current.start).day,
