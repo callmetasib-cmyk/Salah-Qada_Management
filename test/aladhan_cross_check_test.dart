@@ -5,6 +5,7 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:timezone/data/latest.dart' as tzdata;
 
 import 'package:salah_qada_tracker/prayer/prayer_schedule.dart';
 import 'package:adhan_dart/adhan_dart.dart';
@@ -22,6 +23,7 @@ String _formatSeconds(DateTime time) {
 }
 
 void main() {
+  tzdata.initializeTimeZones();
   test('local prayer times stay within two minutes of AlAdhan', () {
     final fixture = jsonDecode(
       File('test/fixtures/aladhan_reference.json').readAsStringSync(),
