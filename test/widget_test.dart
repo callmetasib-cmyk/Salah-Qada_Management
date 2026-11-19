@@ -12,6 +12,8 @@ void main() {
     WidgetTester tester,
   ) async {
     await tester.pumpWidget(const SalahQadaApp());
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pumpAndSettle();
 
     expect(find.text('Salah & Qada'), findsOneWidget);
     expect(find.text('Assalamu alaikum'), findsOneWidget);
