@@ -38,6 +38,20 @@ class LocalDatabase extends _$LocalDatabase {
   @override
   int get schemaVersion => 1;
 
+  @override
+  MigrationStrategy get migration {
+    return MigrationStrategy(
+      onCreate: (Migrator m) async {
+        await m.createAll();
+      },
+      onUpgrade: (Migrator m, int from, int to) async {
+        // Safe forward migrations plan:
+        // When bumping schemaVersion, add incremental table / column alters here
+        // so user's existing prayer and qada records are never lost.
+      },
+    );
+  }
+
   Future<List<PrayerRecord>> getAllRecords() => select(prayerRecords).get();
 
   Future<List<PrayerRecord>> getCompletedRecords() {
@@ -65,12 +79,14 @@ class LocalDatabase extends _$LocalDatabase {
     required String prayerDay,
     required String source,
   }) {
-    return (select(prayerRecords)..where(
-          (row) =>
-              row.prayer.equals(prayer) &
-              row.prayerDay.equals(prayerDay) &
-              row.source.equals(source),
-        ))
+    return (select(prayerRecords)
+          ..where(
+            (row) =>
+                row.prayer.equals(prayer) &
+                row.prayerDay.equals(prayerDay) &
+                row.source.equals(source),
+          )
+          ..limit(1))
         .getSingleOrNull();
   }
 
@@ -79,6 +95,8 @@ class LocalDatabase extends _$LocalDatabase {
     required String prayerDay,
     required String source,
     required DateTime createdAt,
+    bool completed = false,
+    DateTime? completedAt,
   }) {
     return into(prayerRecords).insert(
       PrayerRecordsCompanion.insert(
@@ -86,8 +104,21 @@ class LocalDatabase extends _$LocalDatabase {
         prayerDay: prayerDay,
         source: source,
         createdAt: createdAt,
+        completed: Value(completed),
+        completedAt: Value(completedAt),
       ),
     );
+  }
+
+  Future<List<int>> batchInsertRecords(List<PrayerRecordsCompanion> rows) {
+    return transaction(() async {
+      final ids = <int>[];
+      for (final row in rows) {
+        final id = await into(prayerRecords).insert(row);
+        ids.add(id);
+      }
+      return ids;
+    });
   }
 
   Future<void> setCompleted(int id, bool completed, DateTime? completedAt) {

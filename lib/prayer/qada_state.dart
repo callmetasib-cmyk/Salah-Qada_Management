@@ -54,20 +54,20 @@ class PrayerTrackerState extends ChangeNotifier {
   Future<void> initialize() async {
     if (_isInitialized) return;
     if (_initialization != null) return _initialization!;
-    _initialization = _loadFromDatabase();
-    return _initialization!;
+    try {
+      _initialization = _loadFromDatabase();
+      await _initialization!;
+    } catch (_) {
+      _initialization = null;
+      rethrow;
+    }
   }
 
   Future<void> _loadFromDatabase() async {
     final records = await _database.getAllRecords();
     final automaticRecords = <String, PrayerRecord>{};
-    for (final record in records) {
-      if (record.source == 'current') {
-        _completedPrayers['${record.prayerDay}_${record.prayer}'] =
-            record.completed;
-        continue;
-      }
 
+    for (final record in records) {
       if (record.source == 'automatic') {
         final key = '${record.prayerDay}_${record.prayer}';
         final existing = automaticRecords[key];
@@ -82,18 +82,41 @@ class PrayerTrackerState extends ChangeNotifier {
         continue;
       }
 
-      _qadaList.add(
-        QadaItem(
-          prayer: record.prayer,
-          date: record.prayerDay,
-          missedAt: record.createdAt,
-          source: record.source,
-          recordId: record.id,
-          isMadeUp: record.completed,
-        ),
-      );
+      if (record.source == 'manual') {
+        _qadaList.add(
+          QadaItem(
+            prayer: record.prayer,
+            date: record.prayerDay,
+            missedAt: record.createdAt,
+            source: record.source,
+            recordId: record.id,
+            isMadeUp: record.completed,
+          ),
+        );
+      }
     }
+
+    final completedQadaKeys = automaticRecords.values
+        .where((r) => r.completed)
+        .map((r) => '${r.prayerDay}_${r.prayer}')
+        .toSet();
+
+    for (final record in records) {
+      if (record.source == 'current') {
+        final key = '${record.prayerDay}_${record.prayer}';
+        if (completedQadaKeys.contains(key) && record.completed) {
+          await _database.setCompleted(record.id, false, null);
+          _completedPrayers[key] = true;
+          continue;
+        }
+        _completedPrayers[key] = record.completed;
+      }
+    }
+
     for (final record in automaticRecords.values) {
+      if (record.completed) {
+        _completedPrayers['${record.prayerDay}_${record.prayer}'] = true;
+      }
       _qadaList.add(
         QadaItem(
           prayer: record.prayer,
@@ -114,6 +137,47 @@ class PrayerTrackerState extends ChangeNotifier {
   }
 
   Future<String?> getSelectedCity() => _database.getSetting('selected_city');
+
+  Future<void> setSettingsMode(String mode) {
+    return _database.setSetting('settings_mode', mode);
+  }
+
+  Future<String?> getSettingsMode() => _database.getSetting('settings_mode');
+
+  Future<void> setCalculationMethod(String method) {
+    return _database.setSetting('manual_calculation_method', method);
+  }
+
+  Future<String?> getCalculationMethod() =>
+      _database.getSetting('manual_calculation_method');
+
+  Future<void> setMadhab(String madhab) {
+    return _database.setSetting('manual_madhab', madhab);
+  }
+
+  Future<String?> getMadhab() => _database.getSetting('manual_madhab');
+
+  Future<bool> isFirstLaunchCompleted() async {
+    final value = await _database.getSetting('first_launch_completed');
+    return value == 'true';
+  }
+
+  Future<void> setFirstLaunchCompleted() {
+    return _database.setSetting('first_launch_completed', 'true');
+  }
+
+  Future<void> resetTodayCompletions() async {
+    final nowStr = DateTime.now().toUtc().toIso8601String().substring(0, 10);
+    _completedPrayers.removeWhere((key, _) => key.startsWith(nowStr));
+
+    final records = await _database.getAllRecords();
+    for (final r in records) {
+      if (r.source == 'current' && r.prayerDay == nowStr && r.completed) {
+        await _database.setCompleted(r.id, false, null);
+      }
+    }
+    notifyListeners();
+  }
 
   Future<List<CompletedPrayer>> completedHistory() async {
     final records = await _database.getCompletedRecords();
@@ -175,6 +239,52 @@ class PrayerTrackerState extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> markMissedPrayerLate(String prayer, DateTime prayerDay) async {
+    final key = _prayerKey(prayer, prayerDay);
+    _completedPrayers[key] = true;
+
+    final dateStr = prayerDay.toIso8601String().substring(0, 10);
+
+    // If there is any 'current' record for this prayer today, ensure it is NOT marked completed
+    final currentRecord = await _database.findRecord(
+      prayer: prayer,
+      prayerDay: dateStr,
+      source: 'current',
+    );
+    if (currentRecord != null && currentRecord.completed) {
+      await _database.setCompleted(currentRecord.id, false, null);
+    }
+
+    final matching = _qadaList
+        .where((item) => item.prayer == prayer && item.date == dateStr)
+        .firstOrNull;
+
+    if (matching != null) {
+      await completeQadaItem(matching);
+    } else {
+      final now = DateTime.now();
+      final id = await _database.insertRecord(
+        prayer: prayer,
+        prayerDay: dateStr,
+        source: 'automatic',
+        createdAt: now,
+        completed: true,
+        completedAt: now,
+      );
+      _qadaList.add(
+        QadaItem(
+          prayer: prayer,
+          date: dateStr,
+          missedAt: now,
+          source: 'automatic',
+          recordId: id,
+          isMadeUp: true,
+        ),
+      );
+    }
+    notifyListeners();
+  }
+
   Future<void> _removePendingAutomaticQada(String prayer, String date) async {
     final matching = _qadaList
         .where(
@@ -211,6 +321,11 @@ class PrayerTrackerState extends ChangeNotifier {
     Map<PrayerWindow, PrayerStatus> statuses,
   ) async {
     await initialize();
+    final firstLaunchDone = await isFirstLaunchCompleted();
+    if (!firstLaunchDone) {
+      // Clean start: don't auto-log Qada until onboarding is completed or dismissed
+      return;
+    }
     var changed = false;
     for (final window in displayWindows) {
       final status = statuses[window];
@@ -250,6 +365,7 @@ class PrayerTrackerState extends ChangeNotifier {
   }
 
   Future<void> completeQadaItem(QadaItem item) async {
+    if (item.isMadeUp) return;
     item.isMadeUp = true;
     if (item.recordId != null) {
       await _database.setCompleted(item.recordId!, true, DateTime.now());
@@ -259,14 +375,20 @@ class PrayerTrackerState extends ChangeNotifier {
   }
 
   Future<void> completeAllQada() async {
+    final now = DateTime.now();
+    var changed = false;
     for (final item in _qadaList) {
+      if (item.isMadeUp) continue;
       item.isMadeUp = true;
+      changed = true;
       if (item.recordId != null) {
-        await _database.setCompleted(item.recordId!, true, DateTime.now());
+        await _database.setCompleted(item.recordId!, true, now);
       }
       await _markRelatedPrayerDone(item);
     }
-    notifyListeners();
+    if (changed) {
+      notifyListeners();
+    }
   }
 
   Future<void> _markRelatedPrayerDone(QadaItem item) async {
@@ -274,24 +396,28 @@ class PrayerTrackerState extends ChangeNotifier {
     final prayerDay = DateTime.tryParse(item.date);
     if (prayerDay == null) return;
 
+    // Satisfy today's screen card without polluting on-time history
     _completedPrayers[_prayerKey(item.prayer, prayerDay)] = true;
-    await _saveCurrentPrayer(
-      prayer: item.prayer,
-      prayerDay: prayerDay,
-      completed: true,
-    );
   }
 
   Future<void> addManualQada(String prayer, {int count = 1}) async {
     await initialize();
-    for (var index = 0; index < count; index++) {
-      final now = DateTime.now();
-      final id = await _database.insertRecord(
-        prayer: prayer,
-        prayerDay: 'unknown',
-        source: 'manual',
-        createdAt: now,
-      );
+    if (count <= 0) return;
+    final clampedCount = count.clamp(1, 10000);
+    final now = DateTime.now();
+
+    final companions = [
+      for (var index = 0; index < clampedCount; index++)
+        PrayerRecordsCompanion.insert(
+          prayer: prayer,
+          prayerDay: 'unknown',
+          source: 'manual',
+          createdAt: now,
+        ),
+    ];
+
+    final ids = await _database.batchInsertRecords(companions);
+    for (final id in ids) {
       _qadaList.add(
         QadaItem(
           prayer: prayer,
@@ -329,19 +455,9 @@ class PrayerTrackerState extends ChangeNotifier {
         prayerDay: day,
         source: 'current',
         createdAt: DateTime.now(),
+        completed: completed,
+        completedAt: completed ? DateTime.now() : null,
       );
-      final inserted = await _database.findRecord(
-        prayer: prayer,
-        prayerDay: day,
-        source: 'current',
-      );
-      if (inserted != null) {
-        await _database.setCompleted(
-          inserted.id,
-          completed,
-          completed ? DateTime.now() : null,
-        );
-      }
       return;
     }
     await _database.setCompleted(

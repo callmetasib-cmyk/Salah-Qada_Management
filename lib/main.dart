@@ -73,12 +73,29 @@ class _AppShellState extends State<AppShell> {
     final tracker = PrayerTrackerState.instance;
     await tracker.initialize();
     final cityName = await tracker.getSelectedCity();
+    final modeName = await tracker.getSettingsMode();
+    final methodName = await tracker.getCalculationMethod();
+    final madhabName = await tracker.getMadhab();
     if (!mounted) return;
+
     final matches = starterCities.where((item) => item.name == cityName);
     final city = matches.isEmpty ? null : matches.first;
+    final mode = PrayerSettingsMode.values
+        .where((item) => item.name == modeName)
+        .firstOrNull;
+    final method = calculationMethods
+        .where((item) => item.name == methodName)
+        .firstOrNull;
+    final madhab = Madhab.values
+        .where((item) => item.name == madhabName)
+        .firstOrNull;
+
     if (!mounted) return;
     setState(() {
       if (city != null) _selectedCity = city;
+      if (mode != null) _settingsMode = mode;
+      if (method != null) _manualCalculationMethod = method;
+      if (madhab != null) _manualMadhab = madhab;
     });
   }
 
@@ -89,6 +106,11 @@ class _AppShellState extends State<AppShell> {
         city: _selectedCity,
         calculationMethod: _selectedCalculationMethod,
         madhab: _selectedMadhab,
+        onCityChanged: (city) async {
+          setState(() => _selectedCity = city);
+          await PrayerTrackerState.instance.setSelectedCity(city.name);
+          await PrayerTrackerState.instance.resetTodayCompletions();
+        },
       ),
       const QadaScreen(),
       const HistoryScreen(),
@@ -98,21 +120,41 @@ class _AppShellState extends State<AppShell> {
         selectedCalculationMethod: _selectedCalculationMethod,
         selectedMadhab: _selectedMadhab,
         automaticProfile: _automaticProfile,
-        onCityChanged: (city) {
+        onCityChanged: (city) async {
           setState(() => _selectedCity = city);
-          unawaited(PrayerTrackerState.instance.setSelectedCity(city.name));
+          await PrayerTrackerState.instance.setSelectedCity(city.name);
+          await PrayerTrackerState.instance.resetTodayCompletions();
         },
-        onSettingsModeChanged: (mode) => setState(() {
-          _settingsMode = mode;
-        }),
-        onCalculationMethodChanged: (method) => setState(() {
-          _manualCalculationMethod = method;
-          _settingsMode = PrayerSettingsMode.manual;
-        }),
-        onMadhabChanged: (madhab) => setState(() {
-          _manualMadhab = madhab;
-          _settingsMode = PrayerSettingsMode.manual;
-        }),
+        onSettingsModeChanged: (mode) {
+          setState(() => _settingsMode = mode);
+          unawaited(PrayerTrackerState.instance.setSettingsMode(mode.name));
+        },
+        onCalculationMethodChanged: (method) {
+          setState(() {
+            _manualCalculationMethod = method;
+            _settingsMode = PrayerSettingsMode.manual;
+          });
+          unawaited(
+            PrayerTrackerState.instance.setCalculationMethod(method.name),
+          );
+          unawaited(
+            PrayerTrackerState.instance.setSettingsMode(
+              PrayerSettingsMode.manual.name,
+            ),
+          );
+        },
+        onMadhabChanged: (madhab) {
+          setState(() {
+            _manualMadhab = madhab;
+            _settingsMode = PrayerSettingsMode.manual;
+          });
+          unawaited(PrayerTrackerState.instance.setMadhab(madhab.name));
+          unawaited(
+            PrayerTrackerState.instance.setSettingsMode(
+              PrayerSettingsMode.manual.name,
+            ),
+          );
+        },
       ),
     ];
 
@@ -176,11 +218,13 @@ class PrayerHomeScreen extends StatefulWidget {
     required this.city,
     required this.calculationMethod,
     required this.madhab,
+    this.onCityChanged,
   });
 
   final PrayerCity city;
   final PrayerCalculationMethod calculationMethod;
   final Madhab madhab;
+  final ValueChanged<PrayerCity>? onCityChanged;
 
   @override
   State<PrayerHomeScreen> createState() => _PrayerHomeScreenState();
@@ -213,6 +257,166 @@ class _PrayerHomeScreenState extends State<PrayerHomeScreen>
       PrayerTrackerState.instance.syncWithLiveStatus(
         _controller.state.displayWindows,
         _controller.state.statuses,
+      ),
+    );
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _checkFirstLaunch();
+    });
+  }
+
+  Future<void> _checkFirstLaunch() async {
+    final tracker = PrayerTrackerState.instance;
+    await tracker.initialize();
+    final isDone = await tracker.isFirstLaunchCompleted();
+    if (isDone || !mounted) return;
+
+    await _showFirstLaunchWizard();
+  }
+
+  Future<void> _showFirstLaunchWizard() async {
+    final tracker = PrayerTrackerState.instance;
+    var step = 0; // 0: Select City, 1: Check Today's Prayers
+    var selectedCity = widget.city;
+    var pastPrayers = <PrayerWindow>[];
+    final checkedPrayers = <PrayerWindow, bool>{};
+
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setWizardState) {
+          if (step == 0) {
+            return AlertDialog(
+              title: const Text('Welcome to Salah & Qada'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Where are you located? We will use this to calculate your exact local prayer times.',
+                  ),
+                  const SizedBox(height: 20),
+                  DropdownButtonFormField<PrayerCity>(
+                    initialValue: selectedCity,
+                    decoration: const InputDecoration(
+                      labelText: 'Select your city',
+                      border: OutlineInputBorder(),
+                    ),
+                    items: starterCities.map((city) {
+                      return DropdownMenuItem(
+                        value: city,
+                        child: Text('${city.name} (${city.countryCode})'),
+                      );
+                    }).toList(),
+                    onChanged: (newCity) {
+                      if (newCity != null) {
+                        setWizardState(() {
+                          selectedCity = newCity;
+                        });
+                      }
+                    },
+                  ),
+                ],
+              ),
+              actions: [
+                FilledButton(
+                  onPressed: () async {
+                    // Apply selected city
+                    widget.onCityChanged?.call(selectedCity);
+                    _controller.city = selectedCity;
+                    await tracker.setSelectedCity(selectedCity.name);
+
+                    // Recompute schedule for the selected city
+                    final windows = _controller.state.displayWindows;
+                    final statuses = _controller.state.statuses;
+
+                    pastPrayers = windows
+                        .where((w) => statuses[w] == PrayerStatus.past)
+                        .toList();
+
+                    for (final p in pastPrayers) {
+                      checkedPrayers[p] = false;
+                    }
+
+                    if (pastPrayers.isEmpty) {
+                      // No past prayers yet today in this city (e.g. early morning)
+                      await tracker.setFirstLaunchCompleted();
+                      if (dialogContext.mounted) {
+                        Navigator.of(dialogContext).pop();
+                      }
+                      await tracker.syncWithLiveStatus(windows, statuses);
+                    } else {
+                      // Move to Step 2
+                      setWizardState(() {
+                        step = 1;
+                      });
+                    }
+                  },
+                  child: const Text('Next →'),
+                ),
+              ],
+            );
+          }
+
+          // Step 1: Today's checkoff
+          return AlertDialog(
+            title: Text('Today in ${selectedCity.name}'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Which of today\'s earlier prayers did you already complete?',
+                ),
+                const SizedBox(height: 16),
+                ...pastPrayers.map((prayer) {
+                  return CheckboxListTile(
+                    value: checkedPrayers[prayer] ?? false,
+                    title: Text(prayer.prayer),
+                    controlAffinity: ListTileControlAffinity.leading,
+                    contentPadding: EdgeInsets.zero,
+                    onChanged: (val) {
+                      setWizardState(() {
+                        checkedPrayers[prayer] = val ?? false;
+                      });
+                    },
+                  );
+                }),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () {
+                  setWizardState(() {
+                    step = 0;
+                  });
+                },
+                child: const Text('Back'),
+              ),
+              FilledButton(
+                onPressed: () async {
+                  for (final entry in checkedPrayers.entries) {
+                    if (entry.value) {
+                      await tracker.markMissedPrayerDone(
+                        entry.key.prayer,
+                        entry.key.prayerDay,
+                      );
+                    }
+                  }
+                  await tracker.setFirstLaunchCompleted();
+                  if (dialogContext.mounted) {
+                    Navigator.of(dialogContext).pop();
+                  }
+                  await tracker.syncWithLiveStatus(
+                    _controller.state.displayWindows,
+                    _controller.state.statuses,
+                  );
+                },
+                child: const Text('Get Started'),
+              ),
+            ],
+          );
+        },
       ),
     );
   }
@@ -290,6 +494,11 @@ class _PrayerHomeScreenState extends State<PrayerHomeScreen>
                           : liveState.tiers[current],
                       timeRemaining: liveState.timeRemaining,
                       now: liveState.now,
+                      isDone: current != null &&
+                          PrayerTrackerState.instance.isPrayerDone(
+                            current.prayer,
+                            current.prayerDay,
+                          ),
                     ),
                     const SizedBox(height: 16),
                     Card(
@@ -345,8 +554,14 @@ class _PrayerHomeScreenState extends State<PrayerHomeScreen>
                               liveState.statuses[prayer],
                             );
                           },
-                          onConfirmMissed: () {
+                          onConfirmMissedOnTime: () {
                             PrayerTrackerState.instance.markMissedPrayerDone(
+                              prayer.prayer,
+                              prayer.prayerDay,
+                            );
+                          },
+                          onConfirmMissedLate: () {
+                            PrayerTrackerState.instance.markMissedPrayerLate(
                               prayer.prayer,
                               prayer.prayerDay,
                             );
@@ -469,7 +684,9 @@ class _CitySelector extends StatelessWidget {
                               ? Icons.radio_button_checked
                               : Icons.radio_button_unchecked,
                         ),
-                        onPressed: () => onCityChanged(city),
+                        onPressed: isSelected
+                            ? null
+                            : () => _confirmCitySwitch(context, city),
                       ),
                     ),
                   ],
@@ -480,6 +697,38 @@ class _CitySelector extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  Future<void> _confirmCitySwitch(
+    BuildContext context,
+    PrayerCity newCity,
+  ) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text('Switch city to ${newCity.name}?'),
+        content: Text(
+          'Changing your location will recalculate today\'s schedule for '
+          '${newCity.name} (${newCity.timeZone}).\n\n'
+          'Any earlier prayers that have already passed today in ${newCity.name} '
+          'will be tracked based on your new local time.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Switch city'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      onCityChanged(newCity);
+    }
   }
 }
 
@@ -692,12 +941,35 @@ class QadaScreen extends StatelessWidget {
               ),
               const SizedBox(height: 12),
               if (pending.isNotEmpty)
-                FilledButton.icon(
-                  onPressed: tracker.completeAllQada,
+                OutlinedButton.icon(
+                  onPressed: () async {
+                    final confirmed = await showDialog<bool>(
+                      context: context,
+                      builder: (dialogContext) => AlertDialog(
+                        title: const Text('Make up all Qada?'),
+                        content: Text(
+                          'Are you sure you want to mark all ${pending.length} pending Qada prayer(s) as made up?',
+                        ),
+                        actions: [
+                          TextButton(
+                            onPressed: () => Navigator.pop(dialogContext, false),
+                            child: const Text('Cancel'),
+                          ),
+                          FilledButton(
+                            onPressed: () => Navigator.pop(dialogContext, true),
+                            child: const Text('Yes, mark all made up'),
+                          ),
+                        ],
+                      ),
+                    );
+                    if (confirmed == true) {
+                      await tracker.completeAllQada();
+                    }
+                  },
                   icon: const Icon(Icons.done_all),
-                  label: const Text('Make up all'),
-                  style: FilledButton.styleFrom(
-                    minimumSize: const Size.fromHeight(44),
+                  label: const Text('Make up all pending'),
+                  style: OutlinedButton.styleFrom(
+                    minimumSize: const Size.fromHeight(42),
                   ),
                 ),
               const SizedBox(height: 16),
@@ -720,63 +992,156 @@ Future<void> _showCreateQadaDialog(
   BuildContext context,
   PrayerTrackerState tracker,
 ) async {
-  final counts = {
-    for (final prayer in const ['Fajr', 'Dhuhr', 'Asr', 'Maghrib', 'Isha'])
-      prayer: 0,
+  final prayers = const ['Fajr', 'Dhuhr', 'Asr', 'Maghrib', 'Isha'];
+  final controllers = {
+    for (final prayer in prayers) prayer: TextEditingController(text: '0'),
   };
+
+  void applyPreset(int amount, StateSetter setState) {
+    setState(() {
+      for (final p in prayers) {
+        final current = int.tryParse(controllers[p]!.text) ?? 0;
+        final next = (current + amount).clamp(0, 10000);
+        controllers[p]!.text = '$next';
+      }
+    });
+  }
+
   await showDialog<void>(
     context: context,
-    builder: (context) => StatefulBuilder(
-      builder: (context, setState) => AlertDialog(
-        title: const Text('Create Qada'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: counts.keys.map((prayer) {
-            return Row(
+    builder: (dialogContext) => StatefulBuilder(
+      builder: (context, setDialogState) {
+        final totalCount = prayers.fold<int>(
+          0,
+          (sum, p) => sum + (int.tryParse(controllers[p]!.text) ?? 0),
+        );
+
+        return AlertDialog(
+          title: const Text('Add Qada Prayers'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Expanded(child: Text(prayer)),
-                IconButton(
-                  onPressed: counts[prayer]! == 0
-                      ? null
-                      : () => setState(
-                          () => counts[prayer] = counts[prayer]! - 1,
+                const Text(
+                  'Add missed prayers to your tracker. Use presets or type an exact number.',
+                  style: TextStyle(fontSize: 13, color: Colors.grey),
+                ),
+                const SizedBox(height: 12),
+                Wrap(
+                  spacing: 8,
+                  children: [
+                    ActionChip(
+                      label: const Text('+1 Week'),
+                      onPressed: () => applyPreset(7, setDialogState),
+                    ),
+                    ActionChip(
+                      label: const Text('+1 Month'),
+                      onPressed: () => applyPreset(30, setDialogState),
+                    ),
+                    ActionChip(
+                      label: const Text('+1 Year'),
+                      onPressed: () => applyPreset(365, setDialogState),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                ...prayers.map((prayer) {
+                  final ctrl = controllers[prayer]!;
+                  final count = int.tryParse(ctrl.text) ?? 0;
+
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 4),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            prayer,
+                            style: const TextStyle(fontWeight: FontWeight.w600),
+                          ),
                         ),
-                  icon: const Icon(Icons.remove_circle_outline),
-                ),
-                Text('${counts[prayer]}'),
-                IconButton(
-                  onPressed: () =>
-                      setState(() => counts[prayer] = counts[prayer]! + 1),
-                  icon: const Icon(Icons.add_circle_outline),
-                ),
+                        IconButton(
+                          iconSize: 20,
+                          onPressed: count <= 0
+                              ? null
+                              : () {
+                                  setDialogState(() {
+                                    ctrl.text = '${(count - 1).clamp(0, 10000)}';
+                                  });
+                                },
+                          icon: const Icon(Icons.remove_circle_outline),
+                        ),
+                        SizedBox(
+                          width: 55,
+                          child: TextField(
+                            controller: ctrl,
+                            keyboardType: TextInputType.number,
+                            textAlign: TextAlign.center,
+                            decoration: const InputDecoration(
+                              isDense: true,
+                              contentPadding: EdgeInsets.symmetric(
+                                horizontal: 6,
+                                vertical: 8,
+                              ),
+                              border: OutlineInputBorder(),
+                            ),
+                            onChanged: (val) {
+                              setDialogState(() {
+                                final parsed = int.tryParse(val) ?? 0;
+                                if (parsed > 10000) {
+                                  ctrl.text = '10000';
+                                }
+                              });
+                            },
+                          ),
+                        ),
+                        IconButton(
+                          iconSize: 20,
+                          onPressed: count >= 10000
+                              ? null
+                              : () {
+                                  setDialogState(() {
+                                    ctrl.text = '${(count + 1).clamp(0, 10000)}';
+                                  });
+                                },
+                          icon: const Icon(Icons.add_circle_outline),
+                        ),
+                      ],
+                    ),
+                  );
+                }),
               ],
-            );
-          }).toList(),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
+            ),
           ),
-          FilledButton(
-            onPressed: counts.values.every((count) => count == 0)
-                ? null
-                : () {
-                    for (final entry in counts.entries) {
-                      if (entry.value > 0) {
-                        unawaited(
-                          tracker.addManualQada(entry.key, count: entry.value),
-                        );
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: totalCount <= 0
+                  ? null
+                  : () async {
+                      for (final p in prayers) {
+                        final count = int.tryParse(controllers[p]!.text) ?? 0;
+                        if (count > 0) {
+                          await tracker.addManualQada(p, count: count);
+                        }
                       }
-                    }
-                    Navigator.pop(context);
-                  },
-            child: const Text('Add Qada'),
-          ),
-        ],
-      ),
+                      if (dialogContext.mounted) {
+                        Navigator.pop(dialogContext);
+                      }
+                    },
+              child: Text(totalCount > 0 ? 'Add ($totalCount)' : 'Add'),
+            ),
+          ],
+        );
+      },
     ),
   );
+  for (final c in controllers.values) {
+    c.dispose();
+  }
 }
 
 class _QadaPrayerSection extends StatelessWidget {
@@ -896,72 +1261,64 @@ class _QadaPeriod extends StatelessWidget {
   }
 }
 
-class HistoryScreen extends StatefulWidget {
+class HistoryScreen extends StatelessWidget {
   const HistoryScreen({super.key});
 
   @override
-  State<HistoryScreen> createState() => _HistoryScreenState();
-}
-
-class _HistoryScreenState extends State<HistoryScreen> {
-  late Future<List<CompletedPrayer>> _history;
-
-  @override
-  void initState() {
-    super.initState();
-    _history = PrayerTrackerState.instance.completedHistory();
-  }
-
-  @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('History'),
-        backgroundColor: Colors.transparent,
-      ),
-      body: FutureBuilder<List<CompletedPrayer>>(
-        future: _history,
-        builder: (context, snapshot) {
-          if (!snapshot.hasData) {
-            return const Center(child: Text('Loading history...'));
-          }
-          final byDay = <String, List<CompletedPrayer>>{};
-          for (final item in snapshot.data!) {
-            final day = item.isQada
-                ? item.completedAt.toLocal().toIso8601String().substring(0, 10)
-                : item.prayerDay;
-            byDay.putIfAbsent(day, () => []).add(item);
-          }
-          if (byDay.isEmpty) {
-            return const Center(child: Text('No completed prayers yet.'));
-          }
-          return ListView(
-            padding: const EdgeInsets.fromLTRB(20, 12, 20, 32),
-            children: byDay.entries.map((entry) {
-              final current = entry.value
-                  .where((item) => !item.isQada)
-                  .toList();
-              final qada = entry.value.where((item) => item.isQada).toList();
-              _sortHistoryPrayers(current);
-              _sortHistoryPrayers(qada);
-              return Card(
-                elevation: 0,
-                margin: const EdgeInsets.only(bottom: 12),
-                child: ExpansionTile(
-                  title: Text(
-                    entry.key,
-                    style: const TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                  children: [
-                    _HistoryBox(title: 'Current prayers', prayers: current),
-                    _HistoryBox(title: 'Qada completed', prayers: qada),
-                  ],
-                ),
+    return ListenableBuilder(
+      listenable: PrayerTrackerState.instance,
+      builder: (context, _) {
+        return Scaffold(
+          appBar: AppBar(
+            title: const Text('History'),
+            backgroundColor: Colors.transparent,
+          ),
+          body: FutureBuilder<List<CompletedPrayer>>(
+            future: PrayerTrackerState.instance.completedHistory(),
+            builder: (context, snapshot) {
+              if (!snapshot.hasData) {
+                return const Center(child: Text('Loading history...'));
+              }
+              final byDay = <String, List<CompletedPrayer>>{};
+              for (final item in snapshot.data!) {
+                final day = item.isQada
+                    ? item.completedAt.toLocal().toIso8601String().substring(0, 10)
+                    : item.prayerDay;
+                byDay.putIfAbsent(day, () => []).add(item);
+              }
+              if (byDay.isEmpty) {
+                return const Center(child: Text('No completed prayers yet.'));
+              }
+              return ListView(
+                padding: const EdgeInsets.fromLTRB(20, 12, 20, 32),
+                children: byDay.entries.map((entry) {
+                  final current = entry.value
+                      .where((item) => !item.isQada)
+                      .toList();
+                  final qada = entry.value.where((item) => item.isQada).toList();
+                  _sortHistoryPrayers(current);
+                  _sortHistoryPrayers(qada);
+                  return Card(
+                    elevation: 0,
+                    margin: const EdgeInsets.only(bottom: 12),
+                    child: ExpansionTile(
+                      title: Text(
+                        entry.key,
+                        style: const TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                      children: [
+                        _HistoryBox(title: 'Current prayers', prayers: current),
+                        _HistoryBox(title: 'Qada completed', prayers: qada),
+                      ],
+                    ),
+                  );
+                }).toList(),
               );
-            }).toList(),
-          );
-        },
-      ),
+            },
+          ),
+        );
+      },
     );
   }
 }
@@ -978,29 +1335,7 @@ void _sortHistoryPrayers(List<CompletedPrayer> prayers) {
   });
 }
 
-List<String> _historyPrayerLabels(
-  List<CompletedPrayer> prayers,
-  String historyDay,
-) {
-  final prayer = prayers.first.prayer;
-  final today = prayers
-      .where(
-        (item) =>
-            item.isQada &&
-            item.prayerDay != 'unknown' &&
-            item.prayerDay == historyDay,
-      )
-      .length;
-  final otherCount = prayers.length - today;
-  final labels = <String>[];
-  if (otherCount > 0) {
-    labels.add('$prayer${otherCount > 1 ? ' ($otherCount)' : ''}');
-  }
-  if (today > 0) {
-    labels.add('$prayer (Today)');
-  }
-  return labels;
-}
+
 
 class _HistoryBox extends StatelessWidget {
   const _HistoryBox({required this.title, required this.prayers});
@@ -1009,9 +1344,14 @@ class _HistoryBox extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final grouped = <String, List<CompletedPrayer>>{};
-    for (final prayer in prayers) {
-      grouped.putIfAbsent(prayer.prayer, () => []).add(prayer);
+    if (prayers.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+        child: Text(
+          '$title: None',
+          style: TextStyle(color: Colors.grey.shade600, fontSize: 13),
+        ),
+      );
     }
 
     return Container(
@@ -1020,18 +1360,70 @@ class _HistoryBox extends StatelessWidget {
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: Theme.of(context).colorScheme.surfaceContainerHighest
-            .withValues(alpha: 0.5),
+            .withValues(alpha: 0.4),
         borderRadius: BorderRadius.circular(12),
       ),
-      child: Text(
-        '$title: ${prayers.isEmpty ? 'None' : grouped.values.expand((items) => _historyPrayerLabels(items, _historyDay)).join(', ')}',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+          ),
+          const SizedBox(height: 8),
+          ...prayers.map((prayer) {
+            final timeStr = _formatTime(prayer.completedAt.toLocal());
+            final isQada = prayer.isQada;
+
+            return Padding(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: Row(
+                children: [
+                  Icon(
+                    isQada ? Icons.history : Icons.check_circle_outline,
+                    size: 16,
+                    color: isQada
+                        ? const Color(0xFFB77900)
+                        : const Color(0xFF218739),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    prayer.prayer,
+                    style: const TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                  const Spacer(),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 2,
+                    ),
+                    decoration: BoxDecoration(
+                      color:
+                          (isQada
+                                  ? const Color(0xFFB77900)
+                                  : const Color(0xFF218739))
+                              .withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      isQada ? 'Made up ($timeStr)' : 'On time ($timeStr)',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: isQada
+                            ? const Color(0xFFB77900)
+                            : const Color(0xFF218739),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }),
+        ],
       ),
     );
   }
-
-  String get _historyDay => prayers.isEmpty
-      ? ''
-      : prayers.first.completedAt.toLocal().toIso8601String().substring(0, 10);
 }
 
 class _PrayerCard extends StatelessWidget {
@@ -1042,7 +1434,8 @@ class _PrayerCard extends StatelessWidget {
     required this.tier,
     required this.isDone,
     required this.onToggleDone,
-    required this.onConfirmMissed,
+    required this.onConfirmMissedOnTime,
+    required this.onConfirmMissedLate,
   });
 
   final PrayerWindow prayer;
@@ -1051,7 +1444,8 @@ class _PrayerCard extends StatelessWidget {
   final PrayerTier? tier;
   final bool isDone;
   final VoidCallback onToggleDone;
-  final VoidCallback onConfirmMissed;
+  final VoidCallback onConfirmMissedOnTime;
+  final VoidCallback onConfirmMissedLate;
 
   @override
   Widget build(BuildContext context) {
@@ -1070,14 +1464,14 @@ class _PrayerCard extends StatelessWidget {
     return Card(
       elevation: 0,
       color: isDone
-          ? Colors.green.shade50.withValues(alpha: 0.5)
+          ? Colors.green.shade50.withValues(alpha: 0.35)
           : isInactive
           ? Colors.grey.shade100.withValues(alpha: 0.6)
           : null,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(16),
         side: isDone
-            ? BorderSide(color: Colors.green.shade300, width: 1.5)
+            ? BorderSide(color: Colors.green.shade200, width: 1.2)
             : isInactive
             ? BorderSide(color: Colors.grey.shade300, width: 1.2)
             : BorderSide.none,
@@ -1109,9 +1503,8 @@ class _PrayerCard extends StatelessWidget {
           prayer.prayer,
           style: TextStyle(
             fontWeight: FontWeight.w700,
-            decoration: isDone ? TextDecoration.lineThrough : null,
             color: isDone
-                ? Colors.grey.shade600
+                ? Colors.green.shade900
                 : isInactive
                 ? Colors.grey.shade500
                 : null,
@@ -1165,29 +1558,34 @@ class _PrayerCard extends StatelessWidget {
   }
 
   Future<void> _confirmMissedPrayer(BuildContext context) async {
-    final confirmed = await showDialog<bool>(
+    final choice = await showDialog<String>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text('Confirm ${prayer.prayer}'),
+      builder: (dialogContext) => AlertDialog(
+        title: Text('Record ${prayer.prayer}'),
         content: Text(
-          'Did you perform ${prayer.prayer} even though it was not marked '
-          'as completed?',
+          'Did you pray ${prayer.prayer} on time during its window, or make it up late?',
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
+            onPressed: () => Navigator.of(dialogContext).pop('cancel'),
             child: const Text('Cancel'),
           ),
+          OutlinedButton(
+            onPressed: () => Navigator.of(dialogContext).pop('late'),
+            child: const Text('Prayed late'),
+          ),
           FilledButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Yes, mark it done'),
+            onPressed: () => Navigator.of(dialogContext).pop('on_time'),
+            child: const Text('Prayed on time'),
           ),
         ],
       ),
     );
 
-    if (confirmed == true) {
-      onConfirmMissed();
+    if (choice == 'on_time') {
+      onConfirmMissedOnTime();
+    } else if (choice == 'late') {
+      onConfirmMissedLate();
     }
   }
 
@@ -1208,7 +1606,7 @@ class _PrayerCard extends StatelessWidget {
   String _tierLabel(PrayerStatus status, PrayerTier? tier) => switch (tier) {
     PrayerTier.green => 'Optimal',
     PrayerTier.yellow => 'Normal',
-    PrayerTier.red => 'Ending soon',
+    PrayerTier.red => prayer.prayer == 'Isha' ? 'Past midnight' : 'Ending soon',
     null => status == PrayerStatus.past ? 'Past' : 'Upcoming',
   };
 }

@@ -11,6 +11,7 @@ class SalahDialVisualizer extends StatelessWidget {
     required this.currentTier,
     required this.timeRemaining,
     required this.now,
+    this.isDone = false,
   });
 
   final PrayerWindow? currentWindow;
@@ -18,13 +19,16 @@ class SalahDialVisualizer extends StatelessWidget {
   final PrayerTier? currentTier;
   final Duration? timeRemaining;
   final DateTime now;
+  final bool isDone;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final isResting = currentWindow == null;
 
-    final tierColor = isResting
+    final tierColor = isDone
+        ? const Color(0xFF218739)
+        : isResting
         ? Colors.grey.shade400
         : switch (currentTier) {
             PrayerTier.green => const Color(0xFF218739),
@@ -33,16 +37,22 @@ class SalahDialVisualizer extends StatelessWidget {
             null => Colors.grey.shade400,
           };
 
-    final stateTitle = isResting
+    final stateTitle = isDone
+        ? 'Completed'
+        : isResting
         ? 'Resting / Gap'
         : switch (currentTier) {
             PrayerTier.green => 'Optimal time',
             PrayerTier.yellow => 'Normal time',
-            PrayerTier.red => 'Ending soon',
+            PrayerTier.red => currentWindow?.prayer == 'Isha'
+                ? 'Past midnight'
+                : 'Ending soon',
             null => 'Active',
           };
 
-    final stateSubtitle = isResting
+    final stateSubtitle = isDone
+        ? 'Completed on time'
+        : isResting
         ? 'Next: ${nextWindow?.prayer ?? 'None'}'
         : '${currentWindow!.prayer} in progress';
 
@@ -55,6 +65,19 @@ class SalahDialVisualizer extends StatelessWidget {
         progress = (elapsed / total).clamp(0.0, 1.0);
       }
     }
+
+    final fractions = currentWindow != null
+        ? calculateTierFractions(
+            prayerStart: currentWindow!.start,
+            prayerEnd: currentWindow!.end,
+            prayer: currentWindow!.prayer,
+            islamicMidnight: currentWindow!.islamicMidnight,
+          )
+        : const PrayerTierFractions(
+            greenFraction: 0.33,
+            yellowFraction: 0.34,
+            redFraction: 0.33,
+          );
 
     return Card(
       elevation: 0,
@@ -70,9 +93,10 @@ class SalahDialVisualizer extends StatelessWidget {
               height: 120,
               child: CustomPaint(
                 painter: _DialPainter(
-                  progress: isResting ? null : progress,
+                  progress: (isResting || isDone) ? null : progress,
                   tierColor: tierColor,
-                  isResting: isResting,
+                  isResting: isResting || isDone,
+                  fractions: fractions,
                 ),
               ),
             ),
@@ -95,14 +119,21 @@ class SalahDialVisualizer extends StatelessWidget {
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Container(
-                          width: 8,
-                          height: 8,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: tierColor,
+                        if (isDone)
+                          const Icon(
+                            Icons.check_circle,
+                            size: 14,
+                            color: Color(0xFF218739),
+                          )
+                        else
+                          Container(
+                            width: 8,
+                            height: 8,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: tierColor,
+                            ),
                           ),
-                        ),
                         const SizedBox(width: 6),
                         Text(
                           stateTitle,
@@ -132,12 +163,16 @@ class SalahDialVisualizer extends StatelessWidget {
                   ),
                   const SizedBox(height: 6),
                   Text(
-                    timeRemaining == null
-                        ? '--'
-                        : '${_formatDuration(timeRemaining!)} remaining',
+                    isDone
+                        ? (nextWindow != null
+                            ? 'Next: ${nextWindow!.prayer} ${_timeUntilNext(nextWindow!, now)}'
+                            : 'All prayers caught up')
+                        : (timeRemaining == null
+                            ? '--'
+                            : '${_formatDuration(timeRemaining!)} remaining'),
                     style: theme.textTheme.titleMedium?.copyWith(
                       fontWeight: FontWeight.w700,
-                      color: tierColor,
+                      color: isDone ? Colors.grey.shade600 : tierColor,
                     ),
                   ),
                 ],
@@ -147,6 +182,15 @@ class SalahDialVisualizer extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  String _timeUntilNext(PrayerWindow next, DateTime now) {
+    final diff = next.start.difference(now.toUtc());
+    if (diff.isNegative) return '';
+    final hours = diff.inHours;
+    final minutes = diff.inMinutes.remainder(60);
+    final timeStr = hours > 0 ? '${hours}h ${minutes}m' : '${minutes}m';
+    return 'in $timeStr';
   }
 
   String _formatDuration(Duration duration) {
@@ -161,11 +205,13 @@ class _DialPainter extends CustomPainter {
     required this.progress,
     required this.tierColor,
     required this.isResting,
+    required this.fractions,
   });
 
   final double? progress;
   final Color tierColor;
   final bool isResting;
+  final PrayerTierFractions fractions;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -178,39 +224,39 @@ class _DialPainter extends CustomPainter {
       ..strokeWidth = strokeWidth
       ..strokeCap = StrokeCap.round;
 
-    // Total active sweep angle is 280 degrees, starting at 130 degrees (bottom-left)
-    // The remaining 80 degrees is the grey resting buffer zone.
+    // Total active sweep angle is 270 degrees, starting at 135 degrees (bottom-left)
+    // The remaining 70 degrees is the grey resting buffer zone.
     const startAngle = 135 * (pi / 180);
     const activeSweep = 270 * (pi / 180);
     const restSweep = 70 * (pi / 180);
     const gap = 10 * (pi / 180);
 
-    // Green zone (first ~30% of active)
+    // Green zone (exact duration fraction)
     paintArc.color = const Color(0xFF218739);
     canvas.drawArc(
       Rect.fromCircle(center: center, radius: radius),
       startAngle,
-      activeSweep * 0.30,
+      activeSweep * fractions.greenFraction,
       false,
       paintArc,
     );
 
-    // Yellow zone (middle ~45% of active)
+    // Yellow zone (exact duration fraction)
     paintArc.color = const Color(0xFFB77900);
     canvas.drawArc(
       Rect.fromCircle(center: center, radius: radius),
-      startAngle + activeSweep * 0.30,
-      activeSweep * 0.45,
+      startAngle + activeSweep * fractions.greenFraction,
+      activeSweep * fractions.yellowFraction,
       false,
       paintArc,
     );
 
-    // Red zone (final ~25% of active)
+    // Red zone (exact duration fraction)
     paintArc.color = const Color(0xFFC53929);
     canvas.drawArc(
       Rect.fromCircle(center: center, radius: radius),
-      startAngle + activeSweep * 0.75,
-      activeSweep * 0.25,
+      startAngle + activeSweep * (fractions.greenFraction + fractions.yellowFraction),
+      activeSweep * fractions.redFraction,
       false,
       paintArc,
     );
@@ -260,6 +306,8 @@ class _DialPainter extends CustomPainter {
   bool shouldRepaint(covariant _DialPainter oldDelegate) {
     return oldDelegate.progress != progress ||
         oldDelegate.tierColor != tierColor ||
-        oldDelegate.isResting != isResting;
+        oldDelegate.isResting != isResting ||
+        oldDelegate.fractions.greenFraction != fractions.greenFraction ||
+        oldDelegate.fractions.redFraction != fractions.redFraction;
   }
 }
