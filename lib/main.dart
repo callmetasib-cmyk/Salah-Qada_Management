@@ -20,16 +20,72 @@ class SalahQadaApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const primaryColor = Color(0xFF176B58);
+    // "Pillars"-inspired soothing, minimal Islamic aesthetic:
+    // Natural linen/stone canvas with deep botanical pine & warm accents
+    const primaryGreen = Color(0xFF1B4D3E); // Deep botanical sage
+    const surfaceCanvas = Color(0xFFF9F9F6); // Soft warm linen / off-white
 
     return MaterialApp(
       title: 'Salah & Qada',
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(
-          seedColor: primaryColor,
+          seedColor: primaryGreen,
+          primary: primaryGreen,
+          surface: surfaceCanvas,
+          surfaceContainerLowest: Colors.white,
+          surfaceContainerLow: const Color(0xFFF3F5F2),
+          surfaceContainer: const Color(0xFFECEFEA),
+          surfaceContainerHigh: const Color(0xFFE5E9E2),
           brightness: Brightness.light,
         ),
-        scaffoldBackgroundColor: const Color(0xFFF7FAF8),
+        scaffoldBackgroundColor: surfaceCanvas,
+        cardTheme: CardThemeData(
+          color: Colors.white,
+          elevation: 0,
+          margin: EdgeInsets.zero,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+            side: const BorderSide(color: Color(0x0F000000), width: 1),
+          ),
+        ),
+        appBarTheme: const AppBarTheme(
+          elevation: 0,
+          centerTitle: false,
+          scrolledUnderElevation: 0,
+          backgroundColor: Colors.transparent,
+          titleTextStyle: TextStyle(
+            color: Color(0xFF1A2E26),
+            fontSize: 20,
+            fontWeight: FontWeight.w700,
+            letterSpacing: -0.3,
+          ),
+        ),
+        navigationBarTheme: NavigationBarThemeData(
+          backgroundColor: Colors.white,
+          elevation: 0,
+          height: 68,
+          indicatorColor: primaryGreen.withValues(alpha: 0.12),
+          iconTheme: WidgetStateProperty.resolveWith((states) {
+            if (states.contains(WidgetState.selected)) {
+              return const IconThemeData(color: primaryGreen, size: 24);
+            }
+            return IconThemeData(color: Colors.grey.shade500, size: 24);
+          }),
+          labelTextStyle: WidgetStateProperty.resolveWith((states) {
+            if (states.contains(WidgetState.selected)) {
+              return const TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+                color: primaryGreen,
+              );
+            }
+            return TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w500,
+              color: Colors.grey.shade500,
+            );
+          }),
+        ),
         useMaterial3: true,
       ),
       home: const AppShell(),
@@ -501,29 +557,28 @@ class _PrayerHomeScreenState extends State<PrayerHomeScreen>
                           ),
                     ),
                     const SizedBox(height: 16),
-                    Card(
-                      elevation: 0,
-                      child: Padding(
-                        padding: const EdgeInsets.all(16),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'Prayer times',
-                              style: theme.textTheme.titleMedium?.copyWith(
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(18),
+                        border: Border.all(color: const Color(0x0F000000)),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(Icons.location_on_outlined, size: 18, color: theme.colorScheme.primary),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
                               '${widget.city.name} · ${widget.calculationMethod.name} · '
                               '${widget.madhab == Madhab.hanafi ? 'Hanafi' : 'Standard'}',
                               style: theme.textTheme.bodySmall?.copyWith(
                                 color: theme.colorScheme.onSurfaceVariant,
+                                fontWeight: FontWeight.w600,
                               ),
                             ),
-                          ],
-                        ),
+                          ),
+                        ],
                       ),
                     ),
                     const SizedBox(height: 16),
@@ -1899,17 +1954,20 @@ class _PrayerCard extends StatelessWidget {
     return Card(
       elevation: 0,
       color: isDone
-          ? Colors.green.shade50.withValues(alpha: 0.35)
+          ? const Color(0xFFF0F7F4)
           : isInactive
-          ? Colors.grey.shade100.withValues(alpha: 0.6)
-          : null,
+          ? const Color(0xFFF9F9F9)
+          : Colors.white,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(16),
-        side: isDone
-            ? BorderSide(color: Colors.green.shade200, width: 1.2)
-            : isInactive
-            ? BorderSide(color: Colors.grey.shade300, width: 1.2)
-            : BorderSide.none,
+        borderRadius: BorderRadius.circular(18),
+        side: BorderSide(
+          color: isDone
+              ? const Color(0xFFD3E7DE)
+              : isInactive
+              ? const Color(0x0F000000)
+              : const Color(0x18000000),
+          width: 1,
+        ),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
