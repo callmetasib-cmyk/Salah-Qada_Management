@@ -940,7 +940,80 @@ class QadaScreen extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 12),
-              if (pending.isNotEmpty)
+              if (pending.isNotEmpty) ...[
+                Card(
+                  elevation: 0,
+                  color: const Color(0xFFB77900).withValues(alpha: 0.08),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                    side: BorderSide(
+                      color: const Color(0xFFB77900).withValues(alpha: 0.3),
+                    ),
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            const Icon(Icons.track_changes, color: Color(0xFFB77900), size: 20),
+                            const SizedBox(width: 8),
+                            const Text(
+                              'Pace & Schedule Plan',
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 15,
+                                color: Color(0xFFB77900),
+                              ),
+                            ),
+                            const Spacer(),
+                            TextButton.icon(
+                              onPressed: () => _showPlanSetupDialog(context, tracker),
+                              icon: const Icon(Icons.tune, size: 16),
+                              label: Text(
+                                tracker.targetCompletionDate == null ? 'Set Target' : 'Edit Plan',
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 6),
+                        if (tracker.targetCompletionDate == null)
+                          const Text(
+                            'Stack 1 Qada with each current prayer or set a target completion timeframe.',
+                            style: TextStyle(fontSize: 13, color: Colors.grey),
+                          )
+                        else ...[
+                          Text(
+                            'Target: ${_formatDate(tracker.targetCompletionDate!)} (${tracker.targetCompletionDate!.difference(DateTime.now()).inDays + 1} days remaining)',
+                            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                          ),
+                          const SizedBox(height: 4),
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 4,
+                            children: const ['Fajr', 'Dhuhr', 'Asr', 'Maghrib', 'Isha'].map((p) {
+                              final quota = tracker.getDailyQuotaFor(p);
+                              final assigned = tracker.getAssignedCurrentPrayer(p);
+                              return Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFFB77900).withValues(alpha: 0.12),
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: Text(
+                                  quota > 0 ? '$p: +$quota / day (with $assigned)' : '$p: Done',
+                                  style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
+                                ),
+                              );
+                            }).toList(),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
                 OutlinedButton.icon(
                   onPressed: () async {
                     final confirmed = await showDialog<bool>(
@@ -972,6 +1045,7 @@ class QadaScreen extends StatelessWidget {
                     minimumSize: const Size.fromHeight(42),
                   ),
                 ),
+              ],
               const SizedBox(height: 16),
               ...grouped.entries.map(
                 (entry) => _QadaPrayerSection(
@@ -1144,6 +1218,232 @@ Future<void> _showCreateQadaDialog(
   }
 }
 
+Future<void> _showPlanSetupDialog(
+  BuildContext context,
+  PrayerTrackerState tracker,
+) async {
+  DateTime selectedDate = tracker.targetCompletionDate ??
+      DateTime.now().add(const Duration(days: 180));
+  final pairings = Map<String, String>.from(tracker.customPairings);
+  const prayers = ['Fajr', 'Dhuhr', 'Asr', 'Maghrib', 'Isha'];
+
+  await showDialog<void>(
+    context: context,
+    builder: (dialogContext) => StatefulBuilder(
+      builder: (context, setDialogState) {
+        final now = DateTime.now();
+        final days = selectedDate.difference(now).inDays + 1;
+
+        // Check if any current prayer has > 2 Qada assigned to it per day
+        var hasBurnoutRisk = false;
+        final dailyNeededByAssigned = <String, int>{};
+        for (final qp in prayers) {
+          final pending = tracker.getPendingCountFor(qp);
+          final quotaForThisQada = days <= 0
+              ? pending
+              : (pending / days).ceil().clamp(0, pending);
+          final assigned = pairings[qp] ?? qp;
+          dailyNeededByAssigned[assigned] = (dailyNeededByAssigned[assigned] ?? 0) + quotaForThisQada;
+        }
+
+        for (final count in dailyNeededByAssigned.values) {
+          if (count > 2) {
+            hasBurnoutRisk = true;
+            break;
+          }
+        }
+
+        return AlertDialog(
+          title: const Text('Qada Completion Plan'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Select a target timeframe to pace yourself comfortably.',
+                  style: TextStyle(fontSize: 13, color: Colors.grey),
+                ),
+                const SizedBox(height: 12),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 4,
+                  children: [
+                    ActionChip(
+                      label: const Text('1 Week'),
+                      onPressed: () {
+                        setDialogState(() {
+                          selectedDate = DateTime.now().add(const Duration(days: 7));
+                        });
+                      },
+                    ),
+                    ActionChip(
+                      label: const Text('1 Month'),
+                      onPressed: () {
+                        setDialogState(() {
+                          selectedDate = DateTime.now().add(const Duration(days: 30));
+                        });
+                      },
+                    ),
+                    ActionChip(
+                      label: const Text('3 Months'),
+                      onPressed: () {
+                        setDialogState(() {
+                          selectedDate = DateTime.now().add(const Duration(days: 90));
+                        });
+                      },
+                    ),
+                    ActionChip(
+                      label: const Text('6 Months'),
+                      onPressed: () {
+                        setDialogState(() {
+                          selectedDate = DateTime.now().add(const Duration(days: 180));
+                        });
+                      },
+                    ),
+                    ActionChip(
+                      label: const Text('1 Year'),
+                      onPressed: () {
+                        setDialogState(() {
+                          selectedDate = DateTime.now().add(const Duration(days: 365));
+                        });
+                      },
+                    ),
+                    ActionChip(
+                      label: const Text('2 Years'),
+                      onPressed: () {
+                        setDialogState(() {
+                          selectedDate = DateTime.now().add(const Duration(days: 730));
+                        });
+                      },
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.event),
+                  title: Text(
+                    'Target Date: ${_formatDate(selectedDate)}',
+                    style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+                  ),
+                  subtitle: Text('$days day(s) total'),
+                  trailing: TextButton(
+                    onPressed: () async {
+                      final picked = await showDatePicker(
+                        context: context,
+                        initialDate: selectedDate,
+                        firstDate: DateTime.now().add(const Duration(days: 1)),
+                        lastDate: DateTime.now().add(const Duration(days: 3650)),
+                      );
+                      if (picked != null) {
+                        setDialogState(() {
+                          selectedDate = picked;
+                        });
+                      }
+                    },
+                    child: const Text('Pick Date'),
+                  ),
+                ),
+                if (hasBurnoutRisk) ...[
+                  const SizedBox(height: 8),
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: Colors.amber.shade50,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: Colors.amber.shade400),
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(Icons.info_outline, color: Colors.amber.shade800, size: 20),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'This pace requires more than 2 Qada per prayer session. Consider extending your timeframe to keep your habit sustainable and stress-free.',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.amber.shade900,
+                              height: 1.3,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 16),
+                const Text(
+                  'Prayer Pairing (Habit Stacking)',
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 4),
+                const Text(
+                  'Choose which daily prayer to attach each Qada to.',
+                  style: TextStyle(fontSize: 12, color: Colors.grey),
+                ),
+                const SizedBox(height: 8),
+                ...prayers.map((qadaPrayer) {
+                  final assigned = pairings[qadaPrayer] ?? qadaPrayer;
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 4),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            'Qada $qadaPrayer with:',
+                            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                          ),
+                        ),
+                        DropdownButton<String>(
+                          value: assigned,
+                          isDense: true,
+                          items: prayers.map((p) {
+                            return DropdownMenuItem<String>(
+                              value: p,
+                              child: Text(p, style: const TextStyle(fontSize: 13)),
+                            );
+                          }).toList(),
+                          onChanged: (val) {
+                            if (val != null) {
+                              setDialogState(() {
+                                pairings[qadaPrayer] = val;
+                              });
+                            }
+                          },
+                        ),
+                      ],
+                    ),
+                  );
+                }),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () async {
+                await tracker.setTargetCompletionDate(selectedDate);
+                for (final p in prayers) {
+                  await tracker.setPrayerPairing(p, pairings[p] ?? p);
+                }
+                if (dialogContext.mounted) {
+                  Navigator.pop(dialogContext);
+                }
+              },
+              child: const Text('Save Plan'),
+            ),
+          ],
+        );
+      },
+    ),
+  );
+}
+
 class _QadaPrayerSection extends StatelessWidget {
   const _QadaPrayerSection({
     required this.prayer,
@@ -1269,47 +1569,113 @@ class HistoryScreen extends StatelessWidget {
     return ListenableBuilder(
       listenable: PrayerTrackerState.instance,
       builder: (context, _) {
+        final tracker = PrayerTrackerState.instance;
         return Scaffold(
           appBar: AppBar(
             title: const Text('History'),
             backgroundColor: Colors.transparent,
           ),
           body: FutureBuilder<List<CompletedPrayer>>(
-            future: PrayerTrackerState.instance.completedHistory(),
+            future: tracker.completedHistory(),
             builder: (context, snapshot) {
               if (!snapshot.hasData) {
                 return const Center(child: Text('Loading history...'));
               }
-              final byDay = <String, List<CompletedPrayer>>{};
-              for (final item in snapshot.data!) {
-                final day = item.isQada
-                    ? item.completedAt.toLocal().toIso8601String().substring(0, 10)
-                    : item.prayerDay;
-                byDay.putIfAbsent(day, () => []).add(item);
+              final completed = snapshot.data!;
+              final nowDayStr = DateTime.now().toLocal().toIso8601String().substring(0, 10);
+
+              // Collect all days represented in history (and include today if not empty)
+              final daysSet = <String>{nowDayStr};
+              for (final c in completed) {
+                if (c.prayerDay.isNotEmpty && c.prayerDay != 'unknown' && c.prayerDay != 'Date not recorded') {
+                  daysSet.add(c.prayerDay);
+                }
+                final completedDayStr = c.completedAt.toLocal().toIso8601String().substring(0, 10);
+                daysSet.add(completedDayStr);
               }
-              if (byDay.isEmpty) {
-                return const Center(child: Text('No completed prayers yet.'));
-              }
+              final sortedDays = daysSet.toList()..sort((a, b) => b.compareTo(a));
+
               return ListView(
                 padding: const EdgeInsets.fromLTRB(20, 12, 20, 32),
-                children: byDay.entries.map((entry) {
-                  final current = entry.value
-                      .where((item) => !item.isQada)
-                      .toList();
-                  final qada = entry.value.where((item) => item.isQada).toList();
-                  _sortHistoryPrayers(current);
-                  _sortHistoryPrayers(qada);
+                children: sortedDays.map((dayStr) {
+                  const fivePrayers = ['Fajr', 'Dhuhr', 'Asr', 'Maghrib', 'Isha'];
+
+                  // 1. Daily 5 prayers status for this day
+                  final dailyStatuses = fivePrayers.map((p) {
+                    // Check if completed on time
+                    final onTimeRecord = completed.where(
+                      (item) => item.prayer == p && item.prayerDay == dayStr && !item.isQada,
+                    ).firstOrNull;
+
+                    if (onTimeRecord != null) {
+                      return (prayer: p, status: 'on_time');
+                    }
+
+                    // Check if made up as qada
+                    final madeUpQada = completed.where(
+                      (item) => item.prayer == p && item.prayerDay == dayStr && item.isQada,
+                    ).firstOrNull;
+
+                    if (madeUpQada != null) {
+                      return (prayer: p, status: 'made_up');
+                    }
+
+                    // Check if pending automatic qada for this day (missed)
+                    final isPendingMissed = tracker.qadaList.any(
+                      (item) => item.prayer == p && item.date == dayStr && !item.isMadeUp,
+                    );
+
+                    if (isPendingMissed) {
+                      return (prayer: p, status: 'missed');
+                    }
+
+                    // For today, check if it's already marked in RAM
+                    if (dayStr == nowDayStr) {
+                      final doneInRam = tracker.isPrayerDone(p, DateTime.now());
+                      if (doneInRam) {
+                        return (prayer: p, status: 'on_time');
+                      }
+                    }
+
+                    return (prayer: p, status: 'unrecorded');
+                  }).toList();
+
+                  // 2. Qada completed on this date that is NOT of this day's daily prayers (historical backlog / catch-up)
+                  final backlogCompleted = completed.where((item) {
+                    final completedDate = item.completedAt.toLocal().toIso8601String().substring(0, 10);
+                    if (completedDate != dayStr) return false;
+                    // Exclude if it's this day's own daily prayer that was made up
+                    if (item.prayerDay == dayStr) return false;
+                    return item.isQada;
+                  }).toList();
+
+                  // Group backlog prayers: e.g. Fajr (x3)
+                  final backlogCounts = <String, int>{};
+                  for (final item in backlogCompleted) {
+                    backlogCounts[item.prayer] = (backlogCounts[item.prayer] ?? 0) + 1;
+                  }
+
+                  final isToday = dayStr == nowDayStr;
+                  final displayTitle = isToday ? 'Today ($dayStr)' : dayStr;
+
                   return Card(
                     elevation: 0,
                     margin: const EdgeInsets.only(bottom: 12),
                     child: ExpansionTile(
+                      initiallyExpanded: isToday,
                       title: Text(
-                        entry.key,
+                        displayTitle,
                         style: const TextStyle(fontWeight: FontWeight.bold),
                       ),
                       children: [
-                        _HistoryBox(title: 'Current prayers', prayers: current),
-                        _HistoryBox(title: 'Qada completed', prayers: qada),
+                        _DailyPrayersBox(
+                          title: isToday ? "Today's prayers" : 'Daily prayers',
+                          items: dailyStatuses,
+                        ),
+                        _BacklogQadaBox(
+                          title: 'Qada completed',
+                          counts: backlogCounts,
+                        ),
                       ],
                     ),
                   );
@@ -1323,44 +1689,19 @@ class HistoryScreen extends StatelessWidget {
   }
 }
 
-const _prayerOrder = ['Fajr', 'Dhuhr', 'Asr', 'Maghrib', 'Isha'];
-
-void _sortHistoryPrayers(List<CompletedPrayer> prayers) {
-  prayers.sort((a, b) {
-    final prayerComparison = _prayerOrder
-        .indexOf(a.prayer)
-        .compareTo(_prayerOrder.indexOf(b.prayer));
-    if (prayerComparison != 0) return prayerComparison;
-    return a.completedAt.compareTo(b.completedAt);
-  });
-}
-
-
-
-class _HistoryBox extends StatelessWidget {
-  const _HistoryBox({required this.title, required this.prayers});
+class _DailyPrayersBox extends StatelessWidget {
+  const _DailyPrayersBox({required this.title, required this.items});
   final String title;
-  final List<CompletedPrayer> prayers;
+  final List<({String prayer, String status})> items;
 
   @override
   Widget build(BuildContext context) {
-    if (prayers.isEmpty) {
-      return Padding(
-        padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-        child: Text(
-          '$title: None',
-          style: TextStyle(color: Colors.grey.shade600, fontSize: 13),
-        ),
-      );
-    }
-
     return Container(
       width: double.infinity,
       margin: const EdgeInsets.fromLTRB(16, 0, 16, 12),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surfaceContainerHighest
-            .withValues(alpha: 0.4),
+        color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.4),
         borderRadius: BorderRadius.circular(12),
       ),
       child: Column(
@@ -1371,48 +1712,140 @@ class _HistoryBox extends StatelessWidget {
             style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
           ),
           const SizedBox(height: 8),
-          ...prayers.map((prayer) {
-            final timeStr = _formatTime(prayer.completedAt.toLocal());
-            final isQada = prayer.isQada;
+          ...items.map((item) {
+            final (icon, color, labelText) = switch (item.status) {
+              'on_time' => (
+                Icons.check_circle_outline,
+                const Color(0xFF218739),
+                'On time',
+              ),
+              'made_up' => (
+                Icons.history,
+                const Color(0xFFB77900),
+                'Made up',
+              ),
+              'missed' => (
+                Icons.warning_amber_outlined,
+                const Color(0xFFC53929),
+                'Missed',
+              ),
+              _ => (
+                Icons.remove_circle_outline,
+                Colors.grey,
+                'Pending',
+              ),
+            };
 
             return Padding(
               padding: const EdgeInsets.symmetric(vertical: 4),
               child: Row(
                 children: [
-                  Icon(
-                    isQada ? Icons.history : Icons.check_circle_outline,
-                    size: 16,
-                    color: isQada
-                        ? const Color(0xFFB77900)
-                        : const Color(0xFF218739),
-                  ),
+                  Icon(icon, size: 16, color: color),
                   const SizedBox(width: 8),
                   Text(
-                    prayer.prayer,
+                    item.prayer,
+                    style: TextStyle(
+                      fontWeight: FontWeight.w600,
+                      color: item.status == 'unrecorded' ? Colors.grey : null,
+                    ),
+                  ),
+                  const Spacer(),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: color.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      labelText,
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: color,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }),
+        ],
+      ),
+    );
+  }
+}
+
+class _BacklogQadaBox extends StatelessWidget {
+  const _BacklogQadaBox({required this.title, required this.counts});
+  final String title;
+  final Map<String, int> counts;
+
+  @override
+  Widget build(BuildContext context) {
+    if (counts.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+        child: Align(
+          alignment: Alignment.centerLeft,
+          child: Text(
+            '$title: None',
+            style: TextStyle(color: Colors.grey.shade600, fontSize: 13),
+          ),
+        ),
+      );
+    }
+
+    const prayerOrder = ['Fajr', 'Dhuhr', 'Asr', 'Maghrib', 'Isha'];
+    final sortedPrayers = counts.keys.toList()
+      ..sort((a, b) {
+        final ai = prayerOrder.indexOf(a);
+        final bi = prayerOrder.indexOf(b);
+        return (ai == -1 ? 99 : ai).compareTo(bi == -1 ? 99 : bi);
+      });
+
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.4),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+          ),
+          const SizedBox(height: 8),
+          ...sortedPrayers.map((p) {
+            final count = counts[p]!;
+            final displayLabel = count > 1 ? '$p (x$count)' : p;
+
+            return Padding(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: Row(
+                children: [
+                  const Icon(Icons.history, size: 16, color: Color(0xFFB77900)),
+                  const SizedBox(width: 8),
+                  Text(
+                    displayLabel,
                     style: const TextStyle(fontWeight: FontWeight.w600),
                   ),
                   const Spacer(),
                   Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 2,
-                    ),
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                     decoration: BoxDecoration(
-                      color:
-                          (isQada
-                                  ? const Color(0xFFB77900)
-                                  : const Color(0xFF218739))
-                              .withValues(alpha: 0.12),
+                      color: const Color(0xFFB77900).withValues(alpha: 0.12),
                       borderRadius: BorderRadius.circular(8),
                     ),
-                    child: Text(
-                      isQada ? 'Made up ($timeStr)' : 'On time ($timeStr)',
+                    child: const Text(
+                      'Made up',
                       style: TextStyle(
                         fontSize: 11,
                         fontWeight: FontWeight.w600,
-                        color: isQada
-                            ? const Color(0xFFB77900)
-                            : const Color(0xFF218739),
+                        color: Color(0xFFB77900),
                       ),
                     ),
                   ),
@@ -1461,6 +1894,8 @@ class _PrayerCard extends StatelessWidget {
         ? 'Missed (Qada)'
         : _tierLabel(status, tier);
 
+    final scheduledQadas = PrayerTrackerState.instance.getScheduledQadaFor(prayer.prayer);
+
     return Card(
       elevation: 0,
       color: isDone
@@ -1476,83 +1911,129 @@ class _PrayerCard extends StatelessWidget {
             ? BorderSide(color: Colors.grey.shade300, width: 1.2)
             : BorderSide.none,
       ),
-      child: ListTile(
-        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        leading: CircleAvatar(
-          backgroundColor: isDone
-              ? Colors.green.shade100
-              : isInactive
-              ? Colors.grey.shade200
-              : tierColor.withValues(alpha: 0.14),
-          foregroundColor: isDone
-              ? const Color(0xFF218739)
-              : isInactive
-              ? Colors.grey.shade500
-              : tierColor,
-          child: Icon(
-            isDone
-                ? Icons.check
-                : isMissed
-                ? Icons.history
-                : isUpcoming
-                ? Icons.schedule_outlined
-                : _tierIcon(tier),
-          ),
-        ),
-        title: Text(
-          prayer.prayer,
-          style: TextStyle(
-            fontWeight: FontWeight.w700,
-            color: isDone
-                ? Colors.green.shade900
-                : isInactive
-                ? Colors.grey.shade500
-                : null,
-          ),
-        ),
-        subtitle: Text(
-          '${_formatTime(localTimes.start)} – '
-          '${_formatTime(localTimes.end)}'
-          '${prayer.endsOnDifferentLocalDate ? ' (tomorrow)' : ''}',
-        ),
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              statusText,
-              style: TextStyle(
-                color: isDone
-                    ? const Color(0xFF218739)
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          ListTile(
+            contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            leading: CircleAvatar(
+              backgroundColor: isDone
+                  ? Colors.green.shade100
+                  : isInactive
+                  ? Colors.grey.shade200
+                  : tierColor.withValues(alpha: 0.14),
+              foregroundColor: isDone
+                  ? const Color(0xFF218739)
+                  : isInactive
+                  ? Colors.grey.shade500
+                  : tierColor,
+              child: Icon(
+                isDone
+                    ? Icons.check
                     : isMissed
-                    ? Colors.grey.shade600
-                    : tierColor,
+                    ? Icons.history
+                    : isUpcoming
+                    ? Icons.schedule_outlined
+                    : _tierIcon(tier),
+              ),
+            ),
+            title: Text(
+              prayer.prayer,
+              style: TextStyle(
                 fontWeight: FontWeight.w700,
-              ),
-            ),
-            const SizedBox(width: 8),
-            IconButton(
-              icon: Icon(
-                isDone ? Icons.check_circle : Icons.radio_button_unchecked,
                 color: isDone
-                    ? const Color(0xFF218739)
+                    ? Colors.green.shade900
                     : isInactive
-                    ? Colors.grey.shade400
-                    : Colors.grey.shade400,
-                size: 26,
+                    ? Colors.grey.shade500
+                    : null,
               ),
-              tooltip: isMissed
-                  ? 'Confirm this prayer was performed'
-                  : isUpcoming
-                  ? 'Available when the prayer time begins'
-                  : (isDone ? 'Mark as not prayed' : 'Mark as prayed'),
-              onPressed: isMissed
-                  ? () => _confirmMissedPrayer(context)
-                  : isUpcoming
-                  ? null
-                  : onToggleDone,
             ),
-          ],
-        ),
+            subtitle: Text(
+              '${_formatTime(localTimes.start)} – '
+              '${_formatTime(localTimes.end)}'
+              '${prayer.endsOnDifferentLocalDate ? ' (tomorrow)' : ''}',
+            ),
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  statusText,
+                  style: TextStyle(
+                    color: isDone
+                        ? const Color(0xFF218739)
+                        : isMissed
+                        ? Colors.grey.shade600
+                        : tierColor,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                IconButton(
+                  icon: Icon(
+                    isDone ? Icons.check_circle : Icons.radio_button_unchecked,
+                    color: isDone
+                        ? const Color(0xFF218739)
+                        : isInactive
+                        ? Colors.grey.shade400
+                        : Colors.grey.shade400,
+                    size: 26,
+                  ),
+                  tooltip: isMissed
+                      ? 'Confirm this prayer was performed'
+                      : isUpcoming
+                      ? 'Available when the prayer time begins'
+                      : (isDone ? 'Mark as not prayed' : 'Mark as prayed'),
+                  onPressed: isMissed
+                      ? () => _confirmMissedPrayer(context)
+                      : isUpcoming
+                      ? null
+                      : onToggleDone,
+                ),
+              ],
+            ),
+          ),
+          if (scheduledQadas.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+              child: Row(
+                children: [
+                  const Text(
+                    'Qada goal:',
+                    style: TextStyle(fontSize: 12, color: Colors.grey, fontWeight: FontWeight.w600),
+                  ),
+                  const SizedBox(width: 8),
+                  Wrap(
+                    spacing: 6,
+                    children: scheduledQadas.map((qadaPrayer) {
+                      final isQadaDone = PrayerTrackerState.instance.isPlanQadaDoneForToday(
+                        prayer.prayer,
+                        qadaPrayer,
+                      );
+                      final quota = PrayerTrackerState.instance.getDailyQuotaFor(qadaPrayer);
+                      final completedToday = PrayerTrackerState.instance.getTodayCompletedPlanQadaCount(
+                        prayer.prayer,
+                        qadaPrayer,
+                      );
+                      return _InteractiveQadaPill(
+                        currentPrayer: prayer.prayer,
+                        qadaPrayer: qadaPrayer,
+                        isDone: isQadaDone,
+                        quota: quota,
+                        completedToday: completedToday,
+                        onComplete: (count) {
+                          PrayerTrackerState.instance.completePlanQada(
+                            prayer.prayer,
+                            qadaPrayer,
+                            count: count,
+                          );
+                        },
+                      );
+                    }).toList(),
+                  ),
+                ],
+              ),
+            ),
+        ],
       ),
     );
   }
@@ -1611,8 +2092,206 @@ class _PrayerCard extends StatelessWidget {
   };
 }
 
+class _InteractiveQadaPill extends StatefulWidget {
+  const _InteractiveQadaPill({
+    required this.currentPrayer,
+    required this.qadaPrayer,
+    required this.isDone,
+    required this.quota,
+    required this.completedToday,
+    required this.onComplete,
+  });
+
+  final String currentPrayer;
+  final String qadaPrayer;
+  final bool isDone;
+  final int quota;
+  final int completedToday;
+  final void Function(int count) onComplete;
+
+  @override
+  State<_InteractiveQadaPill> createState() => _InteractiveQadaPillState();
+}
+
+class _InteractiveQadaPillState extends State<_InteractiveQadaPill>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _animCtrl;
+  late Animation<double> _scaleAnim;
+
+  @override
+  void initState() {
+    super.initState();
+    _animCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 140),
+      lowerBound: 0.0,
+      upperBound: 1.0,
+    );
+    _scaleAnim = Tween<double>(begin: 1.0, end: 1.15).animate(
+      CurvedAnimation(parent: _animCtrl, curve: Curves.easeInOut),
+    );
+  }
+
+  @override
+  void dispose() {
+    _animCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _handleTap() async {
+    if (widget.isDone) return;
+
+    // If quota > 1, show a small bottom sheet / picker dialog allowing the user
+    // to choose how many they completed (e.g. 1 out of 5, or all 5).
+    final pendingCount = PrayerTrackerState.instance.getPendingCountFor(widget.qadaPrayer);
+    final remainingForQuota = (widget.quota - widget.completedToday).clamp(1, pendingCount);
+
+    if (remainingForQuota > 1) {
+      final selectedCount = await showDialog<int>(
+        context: context,
+        builder: (dialogContext) {
+          int count = remainingForQuota;
+          return StatefulBuilder(
+            builder: (context, setDialogState) {
+              return AlertDialog(
+                title: Text('Make up ${widget.qadaPrayer}'),
+                content: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      'Target for this session: $remainingForQuota ${widget.qadaPrayer}. How many did you pray?',
+                      style: const TextStyle(fontSize: 13),
+                    ),
+                    const SizedBox(height: 16),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        IconButton(
+                          onPressed: count <= 1
+                              ? null
+                              : () => setDialogState(() => count--),
+                          icon: const Icon(Icons.remove_circle_outline),
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          child: Text(
+                            '$count',
+                            style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                        IconButton(
+                          onPressed: count >= remainingForQuota
+                              ? null
+                              : () => setDialogState(() => count++),
+                          icon: const Icon(Icons.add_circle_outline),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(dialogContext),
+                    child: const Text('Cancel'),
+                  ),
+                  FilledButton(
+                    onPressed: () => Navigator.pop(dialogContext, count),
+                    child: Text('Confirm ($count)'),
+                  ),
+                ],
+              );
+            },
+          );
+        },
+      );
+
+      if (selectedCount != null && selectedCount > 0) {
+        await _animCtrl.forward();
+        await _animCtrl.reverse();
+        widget.onComplete(selectedCount);
+      }
+    } else {
+      await _animCtrl.forward();
+      await _animCtrl.reverse();
+      widget.onComplete(1);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    const amberColor = Color(0xFFB77900);
+
+    // Text formatting: only show text without duplicate check symbol
+    // e.g. "Dhuhr (+5)" when pending, or "Dhuhr (5/5)" when done
+    String label;
+    if (widget.quota > 1) {
+      if (widget.isDone) {
+        label = '${widget.qadaPrayer} (${widget.quota}/${widget.quota})';
+      } else if (widget.completedToday > 0) {
+        label = '${widget.qadaPrayer} (${widget.completedToday}/${widget.quota})';
+      } else {
+        label = '${widget.qadaPrayer} (+${widget.quota})';
+      }
+    } else {
+      label = widget.qadaPrayer;
+    }
+
+    return ScaleTransition(
+      scale: _scaleAnim,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: widget.isDone ? null : _handleTap,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 200),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            decoration: BoxDecoration(
+              color: widget.isDone
+                  ? amberColor.withValues(alpha: 0.22)
+                  : amberColor.withValues(alpha: 0.08),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: widget.isDone ? amberColor : amberColor.withValues(alpha: 0.4),
+                width: 1.2,
+              ),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  widget.isDone ? Icons.check : Icons.history,
+                  size: 13,
+                  color: amberColor,
+                ),
+                const SizedBox(width: 4),
+                Text(
+                  label,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: amberColor,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 String _madhabLabel(Madhab madhab) =>
     madhab == Madhab.hanafi ? 'Hanafi' : 'Standard';
+
+String _formatDate(DateTime date) {
+  const months = [
+    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+  ];
+  return '${months[date.month - 1]} ${date.day}, ${date.year}';
+}
 
 String _formatTime(DateTime time) {
   final hour = time.hour == 0 || time.hour == 12 ? 12 : time.hour % 12;

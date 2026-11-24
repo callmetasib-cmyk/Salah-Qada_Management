@@ -29,12 +29,14 @@ class CompletedPrayer {
     required this.prayerDay,
     required this.completedAt,
     required this.isQada,
+    this.source = 'current',
   });
 
   final String prayer;
   final String prayerDay;
   final DateTime completedAt;
   final bool isQada;
+  final String source;
 }
 
 class PrayerTrackerState extends ChangeNotifier {
@@ -47,6 +49,13 @@ class PrayerTrackerState extends ChangeNotifier {
   bool _isInitialized = false;
   bool _isSyncing = false;
   Future<void>? _initialization;
+
+  DateTime? _targetCompletionDate;
+  final Map<String, String> _customPairings = {}; // Qada prayer -> Assigned Current prayer
+  final Map<String, int> _todayCompletedPlanQada = {}; // Track completed count for: 'YYYY-MM-DD_currentPrayer_qadaPrayer' -> count
+
+  DateTime? get targetCompletionDate => _targetCompletionDate;
+  Map<String, String> get customPairings => Map.unmodifiable(_customPairings);
 
   List<QadaItem> get qadaList => List.unmodifiable(_qadaList);
   int get totalPendingQada => _qadaList.where((item) => !item.isMadeUp).length;
@@ -128,7 +137,117 @@ class PrayerTrackerState extends ChangeNotifier {
         ),
       );
     }
+
+    final targetDateStr = await _database.getSetting('qada_target_date');
+    if (targetDateStr != null) {
+      _targetCompletionDate = DateTime.tryParse(targetDateStr);
+    }
+    const prayers = ['Fajr', 'Dhuhr', 'Asr', 'Maghrib', 'Isha'];
+    for (final p in prayers) {
+      final pairedWith = await _database.getSetting('pairing_$p');
+      if (pairedWith != null && pairedWith.isNotEmpty) {
+        _customPairings[p] = pairedWith;
+      }
+    }
+
+    // Check today's completed qada to track which planned qadas are done today
+    final todayStr = DateTime.now().toLocal().toIso8601String().substring(0, 10);
+    final completedRecords = await _database.getCompletedRecords();
+    for (final cr in completedRecords) {
+      if (cr.source != 'current' && cr.completedAt != null) {
+        final completedDateStr = cr.completedAt!.toLocal().toIso8601String().substring(0, 10);
+        if (completedDateStr == todayStr) {
+          final assignedCurrent = getAssignedCurrentPrayer(cr.prayer);
+          final key = '${todayStr}_${assignedCurrent}_${cr.prayer}';
+          _todayCompletedPlanQada[key] = (_todayCompletedPlanQada[key] ?? 0) + 1;
+        }
+      }
+    }
+
     _isInitialized = true;
+    notifyListeners();
+  }
+
+  String getAssignedCurrentPrayer(String qadaPrayer) {
+    return _customPairings[qadaPrayer] ?? qadaPrayer;
+  }
+
+  Future<void> setTargetCompletionDate(DateTime? targetDate) async {
+    _targetCompletionDate = targetDate;
+    if (targetDate == null) {
+      await _database.setSetting('qada_target_date', '');
+    } else {
+      await _database.setSetting('qada_target_date', targetDate.toIso8601String());
+    }
+    notifyListeners();
+  }
+
+  Future<void> setPrayerPairing(String qadaPrayer, String assignedCurrentPrayer) async {
+    if (assignedCurrentPrayer == qadaPrayer) {
+      _customPairings.remove(qadaPrayer);
+      await _database.setSetting('pairing_$qadaPrayer', '');
+    } else {
+      _customPairings[qadaPrayer] = assignedCurrentPrayer;
+      await _database.setSetting('pairing_$qadaPrayer', assignedCurrentPrayer);
+    }
+    notifyListeners();
+  }
+
+  int getPendingCountFor(String prayer) {
+    return _qadaList.where((item) => !item.isMadeUp && item.prayer == prayer).length;
+  }
+
+  int getDailyQuotaFor(String qadaPrayer) {
+    final pending = getPendingCountFor(qadaPrayer);
+    if (pending == 0) return 0;
+    if (_targetCompletionDate == null) return 1;
+
+    final now = DateTime.now();
+    final remainingDays = _targetCompletionDate!.difference(now).inDays + 1;
+    if (remainingDays <= 0) return pending;
+    return (pending / remainingDays).ceil().clamp(1, pending);
+  }
+
+  int getTodayCompletedPlanQadaCount(String currentPrayer, String qadaPrayer) {
+    final todayStr = DateTime.now().toLocal().toIso8601String().substring(0, 10);
+    return _todayCompletedPlanQada['${todayStr}_${currentPrayer}_$qadaPrayer'] ?? 0;
+  }
+
+  bool isPlanQadaDoneForToday(String currentPrayer, String qadaPrayer) {
+    final completedCount = getTodayCompletedPlanQadaCount(currentPrayer, qadaPrayer);
+    final quota = getDailyQuotaFor(qadaPrayer);
+    final pending = getPendingCountFor(qadaPrayer);
+    return completedCount >= quota || pending == 0;
+  }
+
+  List<String> getScheduledQadaFor(String currentPrayer) {
+    const prayers = ['Fajr', 'Dhuhr', 'Asr', 'Maghrib', 'Isha'];
+    final result = <String>[];
+    for (final qadaPrayer in prayers) {
+      if (getAssignedCurrentPrayer(qadaPrayer) == currentPrayer) {
+        if (getPendingCountFor(qadaPrayer) > 0 || getTodayCompletedPlanQadaCount(currentPrayer, qadaPrayer) > 0) {
+          result.add(qadaPrayer);
+        }
+      }
+    }
+    return result;
+  }
+
+  Future<void> completePlanQada(String currentPrayer, String qadaPrayer, {int count = 1}) async {
+    final todayStr = DateTime.now().toLocal().toIso8601String().substring(0, 10);
+    final key = '${todayStr}_${currentPrayer}_$qadaPrayer';
+
+    // Find the oldest uncompleted QadaItems for qadaPrayer up to count
+    final itemsToComplete = _qadaList
+        .where((element) => !element.isMadeUp && element.prayer == qadaPrayer)
+        .take(count)
+        .toList();
+
+    for (final item in itemsToComplete) {
+      await completeQadaItem(item);
+    }
+
+    _todayCompletedPlanQada[key] = (_todayCompletedPlanQada[key] ?? 0) + itemsToComplete.length;
     notifyListeners();
   }
 
@@ -189,6 +308,7 @@ class PrayerTrackerState extends ChangeNotifier {
             prayerDay: record.prayerDay,
             completedAt: record.completedAt!,
             isQada: record.source != 'current',
+            source: record.source,
           ),
     ];
   }
