@@ -1393,9 +1393,20 @@ class QadaScreen extends StatelessWidget {
                             style: TextStyle(fontSize: 13, color: isDark ? Colors.grey.shade400 : Colors.grey.shade600),
                           )
                         else ...[
-                          Text(
-                            'Target: ${_formatDate(tracker.targetCompletionDate!)} (${tracker.targetCompletionDate!.difference(DateTime.now()).inDays + 1} days remaining)',
-                            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                          Builder(
+                            builder: (context) {
+                              final nowDate = DateTime(DateTime.now().year, DateTime.now().month, DateTime.now().day);
+                              final targetDate = DateTime(
+                                tracker.targetCompletionDate!.year,
+                                tracker.targetCompletionDate!.month,
+                                tracker.targetCompletionDate!.day,
+                              );
+                              final remaining = targetDate.difference(nowDate).inDays + 1;
+                              return Text(
+                                'Target: ${_formatDate(tracker.targetCompletionDate!)} ($remaining days remaining)',
+                                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                              );
+                            },
                           ),
                           const SizedBox(height: 4),
                           Wrap(
@@ -1647,7 +1658,9 @@ Future<void> _showPlanSetupDialog(
         final theme = Theme.of(context);
         final isDark = theme.brightness == Brightness.dark;
         final now = DateTime.now();
-        final days = selectedDate.difference(now).inDays + 1;
+        final nowDate = DateTime(now.year, now.month, now.day);
+        final targetDate = DateTime(selectedDate.year, selectedDate.month, selectedDate.day);
+        final days = targetDate.difference(nowDate).inDays + 1;
 
         // Check if any current prayer has > 2 Qada assigned to it per day
         var hasBurnoutRisk = false;

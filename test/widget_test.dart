@@ -17,7 +17,7 @@ void main() {
 
     expect(find.text('Salah & Qada'), findsOneWidget);
     expect(find.text('Assalamu alaikum'), findsOneWidget);
-    expect(find.text('Prayer times'), findsOneWidget);
+    expect(find.text("Today's prayers"), findsOneWidget);
 
     await tester.drag(find.byType(ListView), const Offset(0, -500));
     await tester.pumpAndSettle();
@@ -42,7 +42,7 @@ void main() {
 
     await tester.tap(find.text('Settings'));
     await tester.pumpAndSettle();
-    expect(find.text('Prayer settings'), findsOneWidget);
-    expect(find.text('Choose a city'), findsOneWidget);
+    expect(find.text('Prayer calculations'), findsOneWidget);
+    expect(find.text('City / Location'), findsOneWidget);
   });
 }

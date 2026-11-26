@@ -41,11 +41,14 @@ class CompletedPrayer {
 
 class PrayerTrackerState extends ChangeNotifier {
   static final PrayerTrackerState instance = PrayerTrackerState._();
-  PrayerTrackerState._();
+  PrayerTrackerState._() : _database = LocalDatabase();
+
+  @visibleForTesting
+  PrayerTrackerState.forTesting(this._database);
 
   final Map<String, bool> _completedPrayers = {};
   final List<QadaItem> _qadaList = [];
-  final LocalDatabase _database = LocalDatabase();
+  final LocalDatabase _database;
   bool _isInitialized = false;
   bool _isSyncing = false;
   Future<void>? _initialization;
@@ -203,7 +206,13 @@ class PrayerTrackerState extends ChangeNotifier {
     if (_targetCompletionDate == null) return 1;
 
     final now = DateTime.now();
-    final remainingDays = _targetCompletionDate!.difference(now).inDays + 1;
+    final nowDate = DateTime(now.year, now.month, now.day);
+    final targetDate = DateTime(
+      _targetCompletionDate!.year,
+      _targetCompletionDate!.month,
+      _targetCompletionDate!.day,
+    );
+    final remainingDays = targetDate.difference(nowDate).inDays + 1;
     if (remainingDays <= 0) return pending;
     return (pending / remainingDays).ceil().clamp(1, pending);
   }
@@ -234,9 +243,6 @@ class PrayerTrackerState extends ChangeNotifier {
   }
 
   Future<void> completePlanQada(String currentPrayer, String qadaPrayer, {int count = 1}) async {
-    final todayStr = DateTime.now().toLocal().toIso8601String().substring(0, 10);
-    final key = '${todayStr}_${currentPrayer}_$qadaPrayer';
-
     // Find the oldest uncompleted QadaItems for qadaPrayer up to count
     final itemsToComplete = _qadaList
         .where((element) => !element.isMadeUp && element.prayer == qadaPrayer)
@@ -246,9 +252,6 @@ class PrayerTrackerState extends ChangeNotifier {
     for (final item in itemsToComplete) {
       await completeQadaItem(item);
     }
-
-    _todayCompletedPlanQada[key] = (_todayCompletedPlanQada[key] ?? 0) + itemsToComplete.length;
-    notifyListeners();
   }
 
   Future<String?> getThemeMode() => _database.getSetting('theme_mode');
@@ -292,7 +295,7 @@ class PrayerTrackerState extends ChangeNotifier {
   }
 
   Future<void> resetTodayCompletions() async {
-    final nowStr = DateTime.now().toUtc().toIso8601String().substring(0, 10);
+    final nowStr = DateTime.now().toLocal().toIso8601String().substring(0, 10);
     _completedPrayers.removeWhere((key, _) => key.startsWith(nowStr));
 
     final records = await _database.getAllRecords();
@@ -497,6 +500,12 @@ class PrayerTrackerState extends ChangeNotifier {
       await _database.setCompleted(item.recordId!, true, DateTime.now());
     }
     await _markRelatedPrayerDone(item);
+
+    final todayStr = DateTime.now().toLocal().toIso8601String().substring(0, 10);
+    final assignedCurrent = getAssignedCurrentPrayer(item.prayer);
+    final key = '${todayStr}_${assignedCurrent}_${item.prayer}';
+    _todayCompletedPlanQada[key] = (_todayCompletedPlanQada[key] ?? 0) + 1;
+
     notifyListeners();
   }
 
