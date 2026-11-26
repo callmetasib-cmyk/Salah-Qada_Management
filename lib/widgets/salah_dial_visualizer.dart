@@ -79,10 +79,18 @@ class SalahDialVisualizer extends StatelessWidget {
             redFraction: 0.33,
           );
 
+    final isDark = theme.brightness == Brightness.dark;
+
     return Card(
       elevation: 0,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-      color: theme.colorScheme.surface,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(20),
+        side: BorderSide(
+          color: isDark ? const Color(0x22FFFFFF) : const Color(0x0F000000),
+          width: 1,
+        ),
+      ),
+      color: theme.cardTheme.color,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
         child: Row(
@@ -97,6 +105,7 @@ class SalahDialVisualizer extends StatelessWidget {
                   tierColor: tierColor,
                   isResting: isResting || isDone,
                   fractions: fractions,
+                  isDark: isDark,
                 ),
               ),
             ),
@@ -206,12 +215,14 @@ class _DialPainter extends CustomPainter {
     required this.tierColor,
     required this.isResting,
     required this.fractions,
+    required this.isDark,
   });
 
   final double? progress;
   final Color tierColor;
   final bool isResting;
   final PrayerTierFractions fractions;
+  final bool isDark;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -262,7 +273,7 @@ class _DialPainter extends CustomPainter {
     );
 
     // Grey resting zone (buffer between prayer windows)
-    paintArc.color = Colors.grey.shade300;
+    paintArc.color = isDark ? const Color(0xFF2B3530) : Colors.grey.shade300;
     canvas.drawArc(
       Rect.fromCircle(center: center, radius: radius),
       startAngle + activeSweep + gap,
@@ -298,7 +309,7 @@ class _DialPainter extends CustomPainter {
     final hubPaint = Paint()..color = tierColor;
     canvas.drawCircle(center, 5.5, hubPaint);
 
-    final hubInner = Paint()..color = Colors.white;
+    final hubInner = Paint()..color = isDark ? const Color(0xFF1C221F) : Colors.white;
     canvas.drawCircle(center, 2.5, hubInner);
   }
 
@@ -307,6 +318,7 @@ class _DialPainter extends CustomPainter {
     return oldDelegate.progress != progress ||
         oldDelegate.tierColor != tierColor ||
         oldDelegate.isResting != isResting ||
+        oldDelegate.isDark != isDark ||
         oldDelegate.fractions.greenFraction != fractions.greenFraction ||
         oldDelegate.fractions.redFraction != fractions.redFraction;
   }

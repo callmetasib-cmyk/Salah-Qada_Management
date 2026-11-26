@@ -251,6 +251,12 @@ class PrayerTrackerState extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<String?> getThemeMode() => _database.getSetting('theme_mode');
+
+  Future<void> setThemeMode(String mode) {
+    return _database.setSetting('theme_mode', mode);
+  }
+
   Future<void> setSelectedCity(String cityName) {
     return _database.setSetting('selected_city', cityName);
   }
